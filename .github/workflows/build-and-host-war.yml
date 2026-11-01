@@ -106,6 +106,9 @@ jobs:
       - name: Validate the Flyway script set
         run: python3 scripts/validate-migrations.py
 
+      - name: Cross-check the entity model against the schema
+        run: python3 scripts/validate-entities.py
+
       - name: Verify the packaging contract
         run: |
           set -o pipefail
