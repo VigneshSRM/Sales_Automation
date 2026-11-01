@@ -104,7 +104,9 @@ jobs:
           mvn -B -ntp clean package -DskipTests 2>&1 | tee /tmp/mvn.log
 
       - name: Verify the packaging contract
-        run: python3 scripts/verify-war.py backend/target/infeara-sales-os.war
+        run: |
+          set -o pipefail
+          python3 scripts/verify-war.py backend/target/infeara-sales-os.war 2>&1 | tee /tmp/verify.log
 
       - name: Download Apache Tomcat 11
         run: |
@@ -211,6 +213,12 @@ jobs:
               echo "Tail:"
               echo '```'
               grep -E "BUILD FAILURE|ERROR\] Failed to execute|Total time" /tmp/mvn.log | head -10
+              echo '```'
+            fi
+            if [ -f /tmp/verify.log ]; then
+              echo "WAR verification:"
+              echo '```'
+              tail -n 40 /tmp/verify.log
               echo '```'
             fi
             if [ -f /opt/tomcat/logs/catalina.out ]; then
