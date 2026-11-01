@@ -132,6 +132,8 @@ public class SequenceService {
 
         int stepNo = 1;
         for (StepInput input : request.steps()) {
+            // Captured by the validation lambda below, which requires an effectively-final value.
+            final int currentStepNo = stepNo;
             if (input.templateId() == null) {
                 throw new ApiException(ErrorCode.VALIDATION_FAILED,
                         "Every step must reference an approved template");
@@ -140,7 +142,7 @@ public class SequenceService {
                             principal.workspaceId())
                     .filter(EmailTemplate::isApproved)
                     .orElseThrow(() -> new ApiException(ErrorCode.BUSINESS_RULE_VIOLATION,
-                            "Step " + stepNo + ": the template must exist and be approved"));
+                            "Step " + currentStepNo + ": the template must exist and be approved"));
             SequenceStep step = new SequenceStep();
             step.setId(Ids.newId());
             step.setWorkspaceId(principal.workspaceId());
