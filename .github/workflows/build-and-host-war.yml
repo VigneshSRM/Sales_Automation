@@ -103,6 +103,9 @@ jobs:
           set -o pipefail
           mvn -B -ntp clean package -DskipTests 2>&1 | tee /tmp/mvn.log
 
+      - name: Validate the Flyway script set
+        run: python3 scripts/validate-migrations.py
+
       - name: Verify the packaging contract
         run: |
           set -o pipefail

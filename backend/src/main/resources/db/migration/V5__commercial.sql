@@ -19,7 +19,7 @@ CREATE TABLE price_book_items (
     PRIMARY KEY (id),
     UNIQUE KEY uk_price_book_sku (workspace_id, sku),
     CONSTRAINT fk_price_book_ws FOREIGN KEY (workspace_id) REFERENCES workspaces (id),
-    CONSTRAINT fk_price_book_service FOREIGN KEY (service_id) REFERENCES service_offerings (id)
+    CONSTRAINT fk_price_book_service FOREIGN KEY (service_id) REFERENCES services (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE proposals (
