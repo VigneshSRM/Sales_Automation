@@ -25,6 +25,7 @@ The specification's eleven mandatory deliverables, and where each one lives.
 | `tools/data_dictionary.py` | Builds the data dictionary from the migrations |
 | `tools/api_inventory.py` | Builds the endpoint inventory from the controllers |
 | `tools/static_audit.py` | JDK-free consistency checks: imports resolve, one type per file, balanced blocks, capability/error codes declared, repository methods declared |
+| `tools/capability_audit.py` | Cross-checks every enforced capability against the RBAC seed in both directions |
 | `tools/java_symbol_audit.py` | Compile surrogate: resolves every `<field>.<method>()` call against the project type's declared/Lombok-generated methods |
 | `scripts/verify-war.py` | 24 packaging assertions on a built WAR (single-WAR delivery contract) |
 | `scripts/verify-war-selftest.py` | Proves the WAR checker accepts a conforming archive and rejects a broken one |

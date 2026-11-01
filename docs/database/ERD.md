@@ -146,6 +146,9 @@ Key invariants:
   after schema validation, so `validated = false` is never persisted by the gateway path.
 * `email_approvals.payload_hash` binds the decision to the exact subject + body that was reviewed.
 
+V10 adds the three capabilities the guards required but V6 never seeded (`leads.reopen`,
+`opportunities.assign`, `notifications.read`).
+
 V9 adds eight capabilities (`email.accounts.manage/read`, `email.conversations.read/assign`,
 `email.analyze`, `email.rules.manage`, `email.drafts.approve`, `email.attachments.read`) and grants
 them per role — V6's `CROSS JOIN` seeded `SUPER_ADMIN` only with the capabilities that existed then.

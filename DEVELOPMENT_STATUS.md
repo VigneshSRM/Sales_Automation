@@ -2,7 +2,7 @@
 
 **Snapshot:** 2026-11-02 · **Branch state:** working tree (release trains 0–3 plus the addendum
 two-way-email module; meetings/Calendly, the ten AI agents, workflows and commercial modules remain)
-**Repository size:** 215 Java sources, 49 entities, 82 tables across 9 Flyway migrations,
+**Repository size:** 215 Java sources, 49 entities, 82 tables across 10 Flyway migrations,
 25 frontend routes; frontend build and tests pass, backend still never compiled.
 
 Read this file before trusting any other claim about the system. It is the single source of truth for
@@ -22,6 +22,7 @@ what exists, what is schema-only, and what has been *verified*.
 | Backend unit + architecture tests | ⚠️ **Authored, not executed** | 6 JUnit classes in `backend/src/test/java` (`PasswordPolicyTest`, `PageQueryTest`, `SecretCipherTest`, `TotpServiceTest`, `LeadStatusTest`, `ArchitectureTest`); need JDK 17 |
 | Integration tests | ⚠️ **Authored, not executed** | `SchemaMigrationIT` (Testcontainers MariaDB 11.4) verifies V1–V7 apply and the schema contains the core tables; needs Docker |
 | Static cross-checking | ✅ **Run** | `tools/static_audit.py` → 215 files, one benign finding (two controllers share the `/api/v1` prefix) |
+| Capability audit | ✅ **Run** | `tools/capability_audit.py` → 66 seeded, 44 enforced in Java, 10 gated in the UI, **0 used-but-unseeded** (it found three missing seeds, fixed in V10) |
 | Java symbol audit (compile surrogate) | ✅ **Run** | `tools/java_symbol_audit.py` → 215 types, 1011 field-qualified call sites verified, **0 missing methods** (limitation: it cannot type local variables/parameters, so it is a filter, not a compiler) |
 | Entity ↔ migration parity | ✅ **Run** | `tools/schema_report.py` → 49 entities / 82 tables, no column mismatches (now follows `ALTER TABLE … ADD COLUMN`) |
 | Data dictionary | ✅ Generated | `tools/data_dictionary.py` → `docs/database/data-dictionary.md` (82 tables) |

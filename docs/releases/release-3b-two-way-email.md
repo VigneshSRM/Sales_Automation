@@ -36,6 +36,9 @@ acceptable before; it is explicitly not acceptable now. A mailbox must be *read*
   `ALTER TABLE email_messages` that adds direction/threading/RFC-header/UID/AI columns and makes
   `smtp_profile_id` nullable.
 * `V9__email_two_way_rbac.sql` — eight capabilities and their role grants.
+* `V10__missing_capabilities.sql` — unrelated but found by this release's
+  `tools/capability_audit.py`: `leads.reopen`, `opportunities.assign` and `notifications.read` were
+  enforced by guards but never seeded, so six endpoints returned 403 to every role.
 
 Both are forward-only and additive, so release 3 remains deployable without them only if the code is
 rolled back at the same time (the entities expect the new columns).
@@ -63,6 +66,7 @@ rolled back at the same time (the entities expect the new columns).
 | `npm run build` | 22 routes exported; UI copied into the WAR resource root |
 | `python3 tools/java_symbol_audit.py` | 215 types, 1011 call sites, 0 missing methods |
 | `python3 tools/schema_report.py` | 49 entities / 82 tables, no column mismatches |
+| `python3 tools/capability_audit.py` | 0 capabilities enforced without a seed row |
 | `python3 tools/data_dictionary.py` | 82 tables regenerated |
 | `python3 scripts/verify-war-selftest.py` | packaging contract checker proven both ways |
 | `mvn package` / Tomcat / Flyway / real IMAP / real AI call | **not executed** — no JDK, Maven, Tomcat, MariaDB or network route to them in the authoring sandbox |

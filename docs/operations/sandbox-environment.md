@@ -64,6 +64,7 @@ archive and rejects a broken one.
 | WAR packaging contract checker | ✅ yes | `python3 scripts/verify-war-selftest.py` → SELFTEST PASSED (24 checks, good archive accepted, bad archive rejected for 14 reasons) |
 | Schema/entity drift check | ✅ yes | `python3 tools/schema_report.py` → 49 entities, 82 tables, **no column mismatches** |
 | Java symbol audit (compile surrogate) | ✅ yes | `python3 tools/java_symbol_audit.py` → 215 types, 1011 call sites verified, 0 missing |
+| Capability audit | ✅ yes | `python3 tools/capability_audit.py` → 66 seeded / 44 enforced / 0 used-but-unseeded after V10 fixed three real 403 bugs |
 | `mvn package` (compile the backend) | ❌ **no** | no `javac` in the sandbox; see §1 |
 | Flyway migration against MariaDB | ❌ **no** | no MariaDB server available |
 | Tomcat deployment of the WAR | ❌ **no** | no Tomcat binary obtainable and nothing to deploy |

@@ -40,6 +40,7 @@ stays on this list until the code that fixes it is on `main` **and** verified.
 | M-6 | Search covers leads, accounts, contacts and opportunities; templates, sequences and **inbound conversations** are not indexed. | Discoverability gap in the unified inbox search (which only matches subject/mailbox). | Release 7 |
 | M-7 | `JsonSchemaValidator` implements a subset of JSON Schema 2020-12 (type, enum, required, properties, items, min/max, lengths). `patternProperties`, `oneOf`, `$ref` are not supported. | Agent schemas must stay within the supported subset; an unsupported keyword is silently ignored. | Release 5 |
 | M-8 | Business hours are evaluated in the caller's timezone (session, else `app.default-timezone`), not the mailbox's. | A distributed team may see "outside hours" decided by the wrong clock. | Release 5 |
+| M-10 | `email.attachments.read` is seeded but no route uses it yet (attachment metadata is stored, download is not). | A capability exists that no screen exercises; admins may grant a right that does nothing. | Release 7 (file storage) |
 | M-9 | Conversation assignment does not enforce queues: `queueKey` is free text on the mailbox and conversation. | No round-robin or eligibility routing; the shared queue is informational. | Release 5 |
 
 ## Low
