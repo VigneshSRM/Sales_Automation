@@ -19,10 +19,14 @@ export CATALINA_OPTS="${CATALINA_OPTS} -Xms512m -Xmx1536m -XX:+UseG1GC \
   -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8 -Duser.timezone=UTC"
 
 # Datasource (MariaDB 11.4 is the only supported database)
-export DB_URL="jdbc:mariadb://127.0.0.1:3306/infeara_sales"
-export DB_USERNAME="infeara"
+# These five names are read directly by application.yml — do not rename them.
+export DB_HOST="127.0.0.1"
+export DB_PORT="3306"
+export DB_NAME="infeara_sales"
+export DB_USER="infeara"
 export DB_PASSWORD="__INJECTED__"
-export DB_POOL_MAX_SIZE="20"
+export DB_POOL_MAX="20"
+export DB_POOL_MIN="4"
 
 # Application
 export APP_BASE_URL="https://sales.example.com"

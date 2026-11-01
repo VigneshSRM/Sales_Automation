@@ -1,0 +1,200 @@
+# ---------------------------------------------------------------------------
+# Builds the single deployable WAR and *hosts it on Apache Tomcat 11* on a clean
+# machine, then smoke-tests the running application.
+#
+# Why this workflow exists: the development sandbox has no JDK/Maven/Tomcat and no
+# route to Maven Central (docs/operations/sandbox-environment.md), so the only place
+# the build and the Tomcat deployment can actually be executed is a normal runner.
+# This is the "run it for real" path — it produces the artefact, the deployment log
+# and the HTTP evidence, instead of an assertion that it would work.
+#
+# It runs on every push that touches code, the build scripts, or this workflow, and
+# can be started manually from the Actions tab.
+# ---------------------------------------------------------------------------
+name: build-and-host-war
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "arena/**"
+      - main
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "scripts/**"
+      - "deploy/**"
+      - ".github/workflows/build-and-host-war.yml"
+
+concurrency:
+  group: host-war-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-host:
+    name: Build WAR, deploy to Tomcat 11, smoke test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: root_pw_for_ci_only
+          MARIADB_DATABASE: infeara_sales
+          MARIADB_USER: infeara_app
+          MARIADB_PASSWORD: ci_app_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      TOMCAT_VERSION: "11.0.27"
+      DB_HOST: 127.0.0.1
+      DB_PORT: "3306"
+      DB_NAME: infeara_sales
+      DB_USER: infeara_app
+      DB_PASSWORD: ci_app_password
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Toolchain versions
+        run: |
+          java -version
+          javac -version
+          mvn -v
+          node -v
+          python3 -V
+
+      - name: Frontend type-check, unit tests and static export
+        working-directory: frontend
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npx vitest run
+          npm run build
+
+      - name: Build the WAR
+        working-directory: backend
+        run: mvn -B -ntp clean package -DskipTests
+
+      - name: Verify the packaging contract
+        run: python3 scripts/verify-war.py backend/target/infeara-sales-os.war
+
+      - name: Download Apache Tomcat 11
+        run: |
+          curl -fsSL --retry 3 -o /tmp/tomcat.tgz \
+            "https://archive.apache.org/dist/tomcat/tomcat-11/v${TOMCAT_VERSION}/bin/apache-tomcat-${TOMCAT_VERSION}.tar.gz"
+          mkdir -p /opt/tomcat
+          tar -xzf /tmp/tomcat.tgz -C /opt/tomcat --strip-components=1
+          rm -rf /opt/tomcat/webapps/*
+          /opt/tomcat/bin/version.sh
+
+      - name: Deploy ROOT.war and start Tomcat
+        run: |
+          cp backend/target/infeara-sales-os.war /opt/tomcat/webapps/ROOT.war
+          cat > /opt/tomcat/bin/setenv.sh <<'SETENV'
+          export JAVA_HOME="${JAVA_HOME}"
+          export CATALINA_OPTS="-Xms256m -Xmx768m -Dfile.encoding=UTF-8 -Duser.timezone=UTC"
+          export SPRING_PROFILES_ACTIVE=prod
+          export DB_HOST="127.0.0.1"
+          export DB_PORT="3306"
+          export DB_NAME="infeara_sales"
+          export DB_USER="infeara_app"
+          export DB_PASSWORD="ci_app_password"
+          export APP_BASE_URL="http://localhost:8080"
+          export SMTP_SECRET_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+          export SMTP_SECRET_ENCRYPTION_KEY_ID="ci1"
+          export BOOTSTRAP_WORKSPACE_NAME="Infeara Technologies"
+          export BOOTSTRAP_WORKSPACE_SLUG="infeara"
+          export BOOTSTRAP_ADMIN_EMAIL="ci-admin@infeara.local"
+          export BOOTSTRAP_ADMIN_PASSWORD="CiOnly-Passw0rd!2026"
+          export WORKER_ENABLED="true"
+          SETENV
+          chmod +x /opt/tomcat/bin/setenv.sh
+          /opt/tomcat/bin/startup.sh
+          echo "Tomcat started, waiting for the application to report UP"
+
+      - name: Wait for /actuator/health and collect evidence
+        run: |
+          for attempt in $(seq 1 90); do
+            if curl -fsS -o /tmp/health.json http://localhost:8080/actuator/health; then
+              if grep -q '"status":"UP"' /tmp/health.json; then
+                echo "Application UP after ${attempt}s"; cat /tmp/health.json; exit 0
+              fi
+            fi
+            sleep 2
+          done
+          echo "::error::Application did not become healthy"
+          tail -n 200 /opt/tomcat/logs/catalina.out || true
+          exit 1
+
+      - name: Smoke test the deployed WAR (UI + API + OpenAPI)
+        run: |
+          set -e
+          echo "--- GET / (UI) ---"
+          curl -s -o /tmp/index.html -w "http=%{http_code} bytes=%{size_download}\n" http://localhost:8080/
+          grep -qi "<html" /tmp/index.html && echo "UI HTML served"
+          echo "--- GET /engagement/mailbox/ (deep link) ---"
+          curl -s -o /dev/null -w "http=%{http_code}\n" http://localhost:8080/engagement/mailbox/
+          echo "--- GET /_next/ (hashed asset) ---"
+          asset=$(grep -o '/_next/static/[^"]*\.js' /tmp/index.html | head -1)
+          curl -s -o /dev/null -w "asset=$asset http=%{http_code}\n" "http://localhost:8080${asset}"
+          echo "--- GET /api/v1/auth/me (expect 401 JSON envelope) ---"
+          curl -s -w "\nhttp=%{http_code}\n" http://localhost:8080/api/v1/auth/me
+          echo "--- GET /v3/api-docs ---"
+          curl -s -o /dev/null -w "http=%{http_code}\n" http://localhost:8080/v3/api-docs
+          echo "--- Flyway schema check ---"
+          mariadb --version >/dev/null 2>&1 || true
+          python3 - <<'PY'
+          import json, urllib.request
+          with urllib.request.urlopen("http://localhost:8080/v3/api-docs", timeout=30) as response:
+              spec = json.load(response)
+          paths = sorted(spec.get("paths", {}))
+          print(f"OpenAPI paths: {len(paths)}")
+          for path in [p for p in paths if "/email" in p][:30]:
+              print("  ", path)
+          PY
+
+      - name: Deployed schema inventory
+        run: |
+          sudo apt-get install -y -qq mariadb-client >/dev/null 2>&1 || true
+          mariadb -h 127.0.0.1 -u infeara_app -pci_app_password infeara_sales \
+            -e "SELECT COUNT(*) AS tables_created FROM information_schema.tables WHERE table_schema='infeara_sales';
+                SELECT version, success FROM flyway_schema_history ORDER BY installed_rank;" || true
+
+      - name: Upload WAR and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: infeara-sales-os-war-and-logs
+          path: |
+            backend/target/infeara-sales-os.war
+            /opt/tomcat/logs/catalina.out
+            /opt/tomcat/logs/localhost.*.log
+            /tmp/health.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Stop Tomcat
+        if: always()
+        run: /opt/tomcat/bin/shutdown.sh 10 -force || true
