@@ -14,6 +14,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -37,10 +38,19 @@ public class JobEngine {
     private final AppProperties properties;
     private final Clock clock;
     private final Map<String, JobHandler> handlers = new ConcurrentHashMap<>();
+    private final ObjectProvider<JobHandler> jobHandlers;
     private final String workerId;
+    private volatile boolean handlersResolved;
 
+    /**
+     * Handlers are taken as an {@link ObjectProvider} rather than a {@code List} on purpose.
+     * Several handlers need services that themselves need the engine (a mailbox handler needs
+     * the sync service, which enqueues follow-up jobs), and a constructor-injected list forces
+     * every handler to be built while the engine is still being built — an unresolvable cycle.
+     * Resolving lazily on the first dispatch keeps construction order free.
+     */
     public JobEngine(JobRepository jobs, JobExecutionRepository executions, JsonCodec jsonCodec,
-                     AppProperties properties, Clock clock, List<JobHandler> jobHandlers) {
+                     AppProperties properties, Clock clock, ObjectProvider<JobHandler> jobHandlers) {
         this.jobs = jobs;
         this.executions = executions;
         this.jsonCodec = jsonCodec;
@@ -49,10 +59,20 @@ public class JobEngine {
         this.workerId = (properties.getWorker().getInstanceId() == null
                 ? "worker-" + UUID.randomUUID().toString().substring(0, 8)
                 : properties.getWorker().getInstanceId()) + "-jobs";
-        for (JobHandler handler : jobHandlers) {
-            handlers.put(handler.jobType(), handler);
+        this.jobHandlers = jobHandlers;
+    }
+
+    private Map<String, JobHandler> handlers() {
+        if (!handlersResolved) {
+            synchronized (this) {
+                if (!handlersResolved) {
+                    jobHandlers.orderedStream().forEach(h -> handlers.put(h.jobType(), h));
+                    handlersResolved = true;
+                    log.info("job_engine_registered worker={} handlers={}", workerId, handlers.keySet());
+                }
+            }
         }
-        log.info("job_engine_registered worker={} handlers={}", workerId, handlers.keySet());
+        return handlers;
     }
 
     /** Enqueues a job unless one with the same idempotency key already exists. */
@@ -116,7 +136,7 @@ public class JobEngine {
         execution.setStatus("RUNNING");
         executions.save(execution);
         Instant started = clock.instant();
-        JobHandler handler = handlers.get(job.getJobType());
+        JobHandler handler = handlers().get(job.getJobType());
         try {
             if (handler == null) {
                 throw new IllegalStateException("NO_HANDLER_REGISTERED:" + job.getJobType());
