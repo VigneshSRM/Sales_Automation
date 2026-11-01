@@ -201,8 +201,16 @@ jobs:
             echo "Ref: \`${{ github.ref_name }}\` · commit \`${GITHUB_SHA:0:8}\` · [job](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
             echo
             if [ -f /tmp/mvn.log ]; then
+              echo "Compiler diagnostics (deduplicated, first 220):"
               echo '```'
-              grep -E "ERROR|BUILD FAILURE|symbol:|location:|required:|found:" /tmp/mvn.log | head -120
+              grep -E "^\[ERROR\].*\.java:\[" /tmp/mvn.log | sed -E 's#.*/com/infeara/sales/##' | sort -u | head -220
+              echo '```'
+              echo
+              echo "Files with errors: $(grep -oE '/com/infeara/sales/[^:]*\.java' /tmp/mvn.log | sort -u | wc -l)"
+              echo
+              echo "Tail:"
+              echo '```'
+              grep -E "BUILD FAILURE|ERROR\] Failed to execute|Total time" /tmp/mvn.log | head -10
               echo '```'
             fi
             if [ -f /opt/tomcat/logs/catalina.out ]; then

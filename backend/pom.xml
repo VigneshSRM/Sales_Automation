@@ -113,6 +113,14 @@
       <scope>provided</scope>
     </dependency>
 
+    <!-- Entities and several services use Lombok accessors. Version is managed by the
+         Spring Boot parent; scope "provided" keeps it out of the WAR. -->
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <scope>provided</scope>
+    </dependency>
+
     <!-- Test -->
     <dependency>
       <groupId>org.springframework.boot</groupId>

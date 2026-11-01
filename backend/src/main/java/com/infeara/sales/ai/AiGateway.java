@@ -1,6 +1,7 @@
 package com.infeara.sales.ai;
 
 import com.infeara.sales.common.error.ApiException;
+import com.infeara.sales.ai.provider.AiProvider;
 import com.infeara.sales.common.error.ErrorCode;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
