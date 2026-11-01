@@ -54,7 +54,6 @@ UNIQUE: dict[str, list[list[str]]] = {
     "lead_duplicates": [["lead_id", "candidate_type", "candidate_id", "match_type"]],
     "notifications": [["recipient_user_id", "dedupe_key"]],
     "notification_preferences": [["user_id", "notification_type"]],
-    "outbox_events": [["workspace_id", "dedupe_key"]],
     "idempotency_keys": [["workspace_id", "scope", "key_value"]],
     "job_executions": [["job_id", "attempt_no"]],
 }
@@ -283,8 +282,21 @@ def render(tables: list[Table]) -> str:
                 # Columns that point at another table are indexed, not unique
                 # (A lead may legitimately share an industry, a source, etc.).
                 continue
+            missing = [c for c in cols if c not in seen]
+            if missing:
+                # A key over a column the entity does not declare would make MariaDB
+                # reject the whole CREATE TABLE (error 1072). Fail the generation
+                # instead of emitting a migration that cannot run.
+                raise SystemExit(
+                    f"!! {table.name}: UNIQUE {cols} references columns absent from the "
+                    f"entity: {missing}")
             body.append(f"    UNIQUE KEY uk_{table.name}_{'_'.join(cols)} ({', '.join(cols)})")
         for cols in INDEXES.get(table.name, []):
+            missing = [c for c in cols if c not in seen]
+            if missing:
+                raise SystemExit(
+                    f"!! {table.name}: INDEX {cols} references columns absent from the "
+                    f"entity: {missing}")
             body.append(f"    KEY ix_{table.name}_{'_'.join(cols)} ({', '.join(cols)})")
         for col, (ref_table, ref_col) in FOREIGN_KEYS.get(table.name, {}).items():
             if col not in seen or ref_table not in names:

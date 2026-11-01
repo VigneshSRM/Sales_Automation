@@ -417,7 +417,6 @@ CREATE TABLE outbox_events (
     last_error TEXT,
     correlation_id VARCHAR(64),
     PRIMARY KEY (id),
-    UNIQUE KEY uk_outbox_events_workspace_id_dedupe_key (workspace_id, dedupe_key),
     KEY ix_outbox_events_status_available_at (status, available_at),
     CONSTRAINT ck_outbox_events_1 CHECK (status IN ('PENDING','CLAIMED','PROCESSED','DEAD'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

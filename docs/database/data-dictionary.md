@@ -626,7 +626,6 @@ Defined in `V1__core_schema.sql`.
 **Keys and constraints**
 
 - `PRIMARY KEY (id)`
-- `UNIQUE KEY uk_outbox_events_workspace_id_dedupe_key (workspace_id, dedupe_key)`
 - `KEY ix_outbox_events_status_available_at (status, available_at)`
 - `CONSTRAINT ck_outbox_events_1 CHECK (status IN ('PENDING','CLAIMED','PROCESSED','DEAD'))`
 
