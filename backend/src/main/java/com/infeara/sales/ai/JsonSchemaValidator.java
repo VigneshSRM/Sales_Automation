@@ -68,19 +68,19 @@ public class JsonSchemaValidator {
             }
             JsonNode properties = schema.get("properties");
             if (properties != null && properties.isObject()) {
-                properties.propertyNames().forEachRemaining(field -> {
+                for (String field : propertyNames(properties)) {
                     if (value.has(field)) {
                         check(value.get(field), properties.get(field), path + "." + field, errors);
                     }
-                });
+                }
             }
             boolean closed = schema.has("additionalProperties") && !schema.get("additionalProperties").asBoolean();
             if (closed && properties != null) {
-                value.propertyNames().forEachRemaining(field -> {
+                for (String field : propertyNames(value)) {
                     if (!properties.has(field)) {
                         errors.add(path + "." + field + ": is not an allowed property");
                     }
-                });
+                }
             }
         }
 
@@ -109,6 +109,19 @@ public class JsonSchemaValidator {
                 errors.add(path + ": is longer than the maximum length");
             }
         }
+    }
+
+    /**
+     * Names of an object node's properties.
+     *
+     * <p>Deliberately goes through {@code ObjectMapper.convertValue} instead of the {@code JsonNode}
+     * iteration API: Jackson 3 renamed those methods ({@code fieldNames} → {@code propertyNames} →
+     * {@code properties}), and a conversion is version-independent.
+     */
+    @SuppressWarnings("unchecked")
+    private java.util.Collection<String> propertyNames(JsonNode node) {
+        java.util.Map<String, Object> asMap = objectMapper.convertValue(node, java.util.Map.class);
+        return asMap.keySet();
     }
 
     private boolean matchesType(JsonNode value, String type) {
