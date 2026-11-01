@@ -68,7 +68,7 @@ public class JsonSchemaValidator {
             }
             JsonNode properties = schema.get("properties");
             if (properties != null && properties.isObject()) {
-                properties.fieldNames().forEachRemaining(field -> {
+                properties.propertyNames().forEachRemaining(field -> {
                     if (value.has(field)) {
                         check(value.get(field), properties.get(field), path + "." + field, errors);
                     }
@@ -76,7 +76,7 @@ public class JsonSchemaValidator {
             }
             boolean closed = schema.has("additionalProperties") && !schema.get("additionalProperties").asBoolean();
             if (closed && properties != null) {
-                value.fieldNames().forEachRemaining(field -> {
+                value.propertyNames().forEachRemaining(field -> {
                     if (!properties.has(field)) {
                         errors.add(path + "." + field + ": is not an allowed property");
                     }

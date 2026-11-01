@@ -21,19 +21,19 @@ public enum LeadStatus {
     REOPENED,
     ARCHIVED;
 
-    private static final Map<LeadStatus, Set<LeadStatus>> ALLOWED = Map.of(
-            NEW, Set.of(RESEARCHING, QUALIFIED, NURTURE, DISQUALIFIED),
-            RESEARCHING, Set.of(QUALIFIED, NURTURE, DISQUALIFIED),
-            QUALIFIED, Set.of(CONTACTED, NURTURE, DISQUALIFIED),
-            CONTACTED, Set.of(ENGAGED, NURTURE, DISQUALIFIED),
-            ENGAGED, Set.of(MEETING_SCHEDULED, NURTURE, DISQUALIFIED),
-            MEETING_SCHEDULED, Set.of(DISCOVERY_COMPLETED, NURTURE),
-            DISCOVERY_COMPLETED, Set.of(CONVERTED, NURTURE, DISQUALIFIED),
-            NURTURE, Set.of(QUALIFIED, DISQUALIFIED),
-            DISQUALIFIED, Set.of(REOPENED),
-            REOPENED, Set.of(QUALIFIED, RESEARCHING, NURTURE, DISQUALIFIED),
-            CONVERTED, Set.of(),
-            ARCHIVED, Set.of());
+    private static final Map<LeadStatus, Set<LeadStatus>> ALLOWED = Map.ofEntries(
+            Map.entry(NEW, Set.of(RESEARCHING, QUALIFIED, NURTURE, DISQUALIFIED)),
+            Map.entry(RESEARCHING, Set.of(QUALIFIED, NURTURE, DISQUALIFIED)),
+            Map.entry(QUALIFIED, Set.of(CONTACTED, NURTURE, DISQUALIFIED)),
+            Map.entry(CONTACTED, Set.of(ENGAGED, NURTURE, DISQUALIFIED)),
+            Map.entry(ENGAGED, Set.of(MEETING_SCHEDULED, NURTURE, DISQUALIFIED)),
+            Map.entry(MEETING_SCHEDULED, Set.of(DISCOVERY_COMPLETED, NURTURE)),
+            Map.entry(DISCOVERY_COMPLETED, Set.of(CONVERTED, NURTURE, DISQUALIFIED)),
+            Map.entry(NURTURE, Set.of(QUALIFIED, DISQUALIFIED)),
+            Map.entry(DISQUALIFIED, Set.of(REOPENED)),
+            Map.entry(REOPENED, Set.of(QUALIFIED, RESEARCHING, NURTURE, DISQUALIFIED)),
+            Map.entry(CONVERTED, Set.<LeadStatus>of()),
+            Map.entry(ARCHIVED, Set.<LeadStatus>of()));
 
     public boolean canTransitionTo(LeadStatus target) {
         return ALLOWED.getOrDefault(this, Set.of()).contains(target);
