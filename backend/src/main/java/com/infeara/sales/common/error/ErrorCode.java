@@ -1,0 +1,95 @@
+package com.infeara.sales.common.error;
+
+import org.springframework.http.HttpStatus;
+
+/**
+ * Stable machine-readable error codes with their HTTP mapping (spec §12).
+ * Adding a code requires a corresponding row in docs/api/API-SPECIFICATION.md.
+ */
+public enum ErrorCode {
+
+    // Generic
+    VALIDATION_FAILED(HttpStatus.UNPROCESSABLE_ENTITY),
+    MALFORMED_REQUEST(HttpStatus.BAD_REQUEST),
+    INVALID_SORT_FIELD(HttpStatus.BAD_REQUEST),
+    INVALID_FILTER(HttpStatus.BAD_REQUEST),
+    NOT_FOUND(HttpStatus.NOT_FOUND),
+    UNAUTHENTICATED(HttpStatus.UNAUTHORIZED),
+    FORBIDDEN(HttpStatus.FORBIDDEN),
+    RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS),
+    CONFLICT(HttpStatus.CONFLICT),
+    STALE_VERSION(HttpStatus.CONFLICT),
+    DUPLICATE_RESOURCE(HttpStatus.CONFLICT),
+    IDEMPOTENCY_CONFLICT(HttpStatus.CONFLICT),
+    BUSINESS_RULE_VIOLATION(HttpStatus.BAD_REQUEST),
+    INVALID_STATE_TRANSITION(HttpStatus.BAD_REQUEST),
+    UNSUPPORTED_OPERATION(HttpStatus.BAD_REQUEST),
+    INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR),
+    SERVICE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE),
+    PROVIDER_ERROR(HttpStatus.BAD_GATEWAY),
+
+    // Authentication / session
+    INVALID_CREDENTIALS(HttpStatus.UNAUTHORIZED),
+    ACCOUNT_LOCKED(HttpStatus.FORBIDDEN),
+    ACCOUNT_INACTIVE(HttpStatus.FORBIDDEN),
+    MFA_REQUIRED(HttpStatus.UNAUTHORIZED),
+    MFA_INVALID_CODE(HttpStatus.UNAUTHORIZED),
+    MFA_NOT_ENROLLED(HttpStatus.FORBIDDEN),
+    SESSION_EXPIRED(HttpStatus.UNAUTHORIZED),
+    PASSWORD_POLICY_VIOLATION(HttpStatus.UNPROCESSABLE_ENTITY),
+
+    // Workspace / RBAC
+    WORKSPACE_MISMATCH(HttpStatus.NOT_FOUND),
+    CAPABILITY_REQUIRED(HttpStatus.FORBIDDEN),
+    RECORD_SCOPE_DENIED(HttpStatus.FORBIDDEN),
+
+    // CRM
+    LEAD_NOT_FOUND(HttpStatus.NOT_FOUND),
+    DUPLICATE_LEAD(HttpStatus.CONFLICT),
+    INVALID_SCORE_MODEL(HttpStatus.UNPROCESSABLE_ENTITY),
+    ACCOUNT_NOT_FOUND(HttpStatus.NOT_FOUND),
+    CONTACT_NOT_FOUND(HttpStatus.NOT_FOUND),
+    OPPORTUNITY_NOT_FOUND(HttpStatus.NOT_FOUND),
+    STAGE_GATE_FAILED(HttpStatus.UNPROCESSABLE_ENTITY),
+    INVALID_STAGE_TRANSITION(HttpStatus.BAD_REQUEST),
+    TASK_NOT_FOUND(HttpStatus.NOT_FOUND),
+
+    // Engagement (Release 3)
+    SMTP_PROFILE_NOT_FOUND(HttpStatus.NOT_FOUND),
+    SMTP_PROFILE_NOT_ACTIVE(HttpStatus.CONFLICT),
+    SMTP_TEST_FAILED(HttpStatus.BAD_GATEWAY),
+    RECIPIENT_SUPPRESSED(HttpStatus.UNPROCESSABLE_ENTITY),
+    CONSENT_MISSING(HttpStatus.UNPROCESSABLE_ENTITY),
+    SENDING_LIMIT_REACHED(HttpStatus.TOO_MANY_REQUESTS),
+    TEMPLATE_RENDER_FAILED(HttpStatus.UNPROCESSABLE_ENTITY),
+    MESSAGE_NOT_FOUND(HttpStatus.NOT_FOUND),
+
+    // Meetings (Release 4)
+    INVALID_WEBHOOK_SIGNATURE(HttpStatus.UNAUTHORIZED),
+    WEBHOOK_REPLAY_REJECTED(HttpStatus.UNAUTHORIZED),
+    MEETING_NOT_FOUND(HttpStatus.NOT_FOUND),
+
+    // AI (Release 5)
+    AGENT_NOT_FOUND(HttpStatus.NOT_FOUND),
+    AGENT_BUDGET_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS),
+    AI_SCHEMA_VALIDATION_FAILED(HttpStatus.UNPROCESSABLE_ENTITY),
+    AI_PROVIDER_UNAVAILABLE(HttpStatus.BAD_GATEWAY),
+    APPROVAL_REQUIRED(HttpStatus.ACCEPTED),
+    APPROVAL_EXPIRED(HttpStatus.CONFLICT),
+    APPROVAL_INVALIDATED(HttpStatus.CONFLICT),
+
+    // Automation (Release 6)
+    WORKFLOW_INVALID(HttpStatus.UNPROCESSABLE_ENTITY),
+    WORKFLOW_LIMIT_EXCEEDED(HttpStatus.UNPROCESSABLE_ENTITY),
+    JOB_NOT_FOUND(HttpStatus.NOT_FOUND);
+
+    private final HttpStatus status;
+
+    ErrorCode(HttpStatus status) {
+        this.status = status;
+    }
+
+    public HttpStatus status() {
+        return status;
+    }
+}

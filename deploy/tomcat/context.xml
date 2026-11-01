@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Tomcat context for Infeara Sales OS.
+
+  Deployment shape (ADR-004): ONE WAR contains the API and the Next.js static export,
+  deployed as ROOT.war, so the UI's absolute asset URLs (/ _next/...) and the API's
+  relative base (/api/v1) share one origin. That removes CORS from production entirely
+  and lets the HttpOnly session cookie work without SameSite exceptions.
+
+  The path attribute below is documented for operators who install the WAR as an
+  explicit context (conf/Catalina/localhost/ROOT.xml) instead of dropping it in
+  webapps/. Tomcat derives the context path from the WAR name for auto-deployment.
+-->
+<Context path="" docBase="${catalina.base}/webapps/ROOT.war"
+         reloadable="false" swallowOutput="true">
+
+    <!-- Session cookie hardening: the UI and API are same-origin, so SameSite=Lax
+         still allows the SPA to send the session cookie on XHR. -->
+    <CookieProcessor className="org.apache.tomcat.util.http.Rfc6265CookieProcessor"
+                     sameSiteCookies="lax" />
+
+    <!-- No JNDI datasource: the pool is owned by Spring (HikariCP) so one place
+         controls validation, leak detection and metrics. Put credentials in
+         bin/setenv.sh, never in this file. -->
+
+    <!-- Compression is a connector-level setting, not a valve. Add to conf/server.xml:
+             <Connector port="8080" protocol="org.apache.coyote.http11.Http11NioProtocol"
+                        compression="on" compressibleMimeType="application/json,text/html,text/css,
+                        application/javascript,image/svg+xml" noCompressionUserAgents=""/>
+         Do not enable compression on the HTTPS connector together with BREACH-prone
+         responses unless the reverse proxy already handles it. -->
+
+    <!-- Access log without query strings (they can contain search terms) -->
+    <Valve className="org.apache.catalina.valves.AccessLogValve" directory="logs"
+           prefix="access" suffix=".log" rotatable="true" fileDateFormat="yyyy-MM-dd"
+           pattern="%h %l %u %t &quot;%m %U&quot; %s %b %D" />
+
+    <!-- Trust only the reverse proxy for forwarded headers when one is in front.
+         Commented out by default: enabling it without a proxy lets clients spoof
+         their own IP and break rate limiting and audit.
+    <Valve className="org.apache.catalina.valves.RemoteIpValve"
+           remoteIpHeader="X-Forwarded-For" protocolHeader="X-Forwarded-Proto" />
+    -->
+</Context>

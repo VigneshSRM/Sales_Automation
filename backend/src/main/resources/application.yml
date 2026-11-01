@@ -1,0 +1,188 @@
+# =============================================================================
+# Infeara Sales OS — base configuration.
+# Secrets are NEVER stored here: they are injected from the environment / OS
+# keystore (see docs/deployment/DEPLOYMENT-GUIDE.md §Secret management).
+# =============================================================================
+spring:
+  application:
+    name: infeara-sales-os
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+  datasource:
+    url: jdbc:mariadb://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_NAME:infeara_sales}?useUnicode=true&characterEncoding=utf8&useServerPrepStmts=true&useBulkStmts=false&connectTimeout=5000&socketTimeout=30000
+    username: ${DB_USER:infeara_app}
+    password: ${DB_PASSWORD:}
+    driver-class-name: org.mariadb.jdbc.Driver
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:20}
+      minimum-idle: ${DB_POOL_MIN:4}
+      connection-timeout: 5000
+      pool-name: infeara-cp
+      data-source-properties:
+        sessionVariables:
+          time_zone: '+00:00'
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Production schema is Flyway-owned (spec §11). `validate` is used in the
+      # default profile so that entity/schema drift fails fast at startup.
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+          batch_size: 30
+        order_inserts: true
+        order_updates: true
+        query:
+          in_clause_parameter_padding: true
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
+    locations: classpath:db/migration
+    validate-on-migrate: true
+  jackson:
+    default-property-inclusion: non_null
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
+  mail:
+    # Per-profile transports are created at runtime from smtp_profiles rows;
+    # this block is only used by the internal health/test-send account.
+    test-connection: false
+  mvc:
+    problemdetails:
+      enabled: false
+  threads:
+    virtual:
+      enabled: false
+
+server:
+  port: ${SERVER_PORT:8080}
+  servlet:
+    context-path: ${SERVER_CONTEXT_PATH:/}
+    session:
+      timeout: 8h
+      cookie:
+        http-only: true
+        secure: ${COOKIE_SECURE:true}
+        same-site: lax
+  error:
+    include-message: never
+    include-stacktrace: never
+  tomcat:
+    max-http-form-post-size: 2MB
+    max-swallow-size: 4MB
+    threads:
+      max: 200
+  forward-headers-strategy: native
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when_authorized
+  health:
+    db:
+      enabled: true
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: alpha
+  default-produces-media-type: application/json
+
+app:
+  base-url: ${APP_BASE_URL:http://localhost:8080}
+  default-timezone: ${APP_TIMEZONE:Asia/Kolkata}
+  environment: ${APP_ENV:development}
+  security:
+    # Base64-encoded 32-byte AES-256-GCM key material. MUST be injected.
+    # Generate: openssl rand -base64 32
+    encryption-key: ${SMTP_SECRET_ENCRYPTION_KEY:}
+    encryption-key-id: ${SMTP_SECRET_ENCRYPTION_KEY_ID:k1}
+    # Legacy key material accepted for decryption during rotation (comma separated id:key pairs)
+    previous-encryption-keys: ${SMTP_SECRET_PREVIOUS_KEYS:}
+    session-ttl-minutes: ${SESSION_TTL_MINUTES:480}
+    session-idle-minutes: ${SESSION_IDLE_MINUTES:60}
+    max-failed-logins: 5
+    lockout-minutes: 15
+    mfa:
+      enabled: true
+      issuer: Infeara Sales OS
+      window-steps: 1
+    rate-limit:
+      enabled: true
+      auth-per-minute: 20
+      api-per-minute: 600
+      webhook-per-minute: 300
+  bootstrap:
+    # First-run provisioning. Validated and audited; no credentials are stored in
+    # source control. Leave the admin password empty to skip automatic bootstrap.
+    workspace-name: ${BOOTSTRAP_WORKSPACE_NAME:Infeara Technologies}
+    workspace-slug: ${BOOTSTRAP_WORKSPACE_SLUG:infeara}
+    workspace-timezone: ${BOOTSTRAP_WORKSPACE_TIMEZONE:Asia/Kolkata}
+    admin-email: ${BOOTSTRAP_ADMIN_EMAIL:}
+    admin-password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+    admin-display-name: ${BOOTSTRAP_ADMIN_NAME:Workspace Administrator}
+  worker:
+    enabled: ${WORKER_ENABLED:true}
+    instance-id: ${WORKER_INSTANCE_ID:}
+    outbox-batch-size: 25
+    outbox-lease-seconds: 120
+    jobs-batch-size: 20
+    job-lease-seconds: 180
+    job-max-attempts: 8
+    job-backoff-base-seconds: 30
+    job-backoff-cap-seconds: 3600
+    tick-interval-ms: 5000
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:}
+  email:
+    inbound:
+      # Two-way mailbox integration (addendum 3.2). Discovery enqueues a leased MAILBOX_SYNC job
+      # per active mailbox; nothing is read inline on a request thread.
+      discovery-interval-ms: ${EMAIL_INBOUND_DISCOVERY_INTERVAL_MS:60000}
+      # Hard caps so one hostile message cannot exhaust memory or the database.
+      max-body-chars: ${EMAIL_INBOUND_MAX_BODY_CHARS:200000}
+      max-attachment-bytes: ${EMAIL_INBOUND_MAX_ATTACHMENT_BYTES:10485760}
+      max-attachments-per-message: ${EMAIL_INBOUND_MAX_ATTACHMENTS:20}
+      connect-timeout-seconds: ${EMAIL_INBOUND_CONNECT_TIMEOUT_SECONDS:20}
+      read-timeout-seconds: ${EMAIL_INBOUND_READ_TIMEOUT_SECONDS:60}
+      # Upper bound on messages fetched per sync, oldest first, so a backlog drains gradually.
+      max-messages-per-sync: ${EMAIL_INBOUND_MAX_MESSAGES_PER_SYNC:50}
+      # Reply policy cannot auto-send outside these hours; drafts go to the approval queue instead.
+      business-hours-start: ${EMAIL_BUSINESS_HOURS_START:09:00}
+      business-hours-end: ${EMAIL_BUSINESS_HOURS_END:18:00}
+  ai:
+    timeout-seconds: ${AI_TIMEOUT_SECONDS:30}
+    openrouter:
+      api-key: ${AI_OPENROUTER_API_KEY:}
+      model: ${AI_OPENROUTER_MODEL:openai/gpt-4o-mini}
+    openai:
+      api-key: ${AI_OPENAI_API_KEY:}
+      model: ${AI_OPENAI_MODEL:gpt-4o-mini}
+    # Order of preference when more than one provider is configured.
+    preferred-provider: ${AI_PREFERRED_PROVIDER:OPENROUTER}
+  webhooks:
+    calendly:
+      # Signing key per subscription is stored encrypted on calendly_connections;
+      # this is the fallback tolerance for replay protection.
+      tolerance-seconds: 180
+
+logging:
+  level:
+    root: INFO
+    com.infeara.sales: ${LOG_LEVEL_APP:INFO}
+    org.hibernate.SQL: WARN
+  pattern:
+    # Never log request bodies or headers; correlation id always present.
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%X{requestId:-}] [%X{workspaceId:-}] %logger{36} - %msg%n"
