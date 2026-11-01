@@ -114,7 +114,10 @@ public class WorkspaceBootstrapService implements ApplicationRunner {
         workspace.setName(config.getWorkspaceName());
         workspace.setSlug(config.getWorkspaceSlug());
         workspace.setDefaultTimezone(config.getWorkspaceTimezone());
-        workspaces.save(workspace);
+        // flush (not just save): Hibernate orders INSERTs alphabetically by entity name, so every
+        // dependent row (audit_logs sorts before workspaces) would otherwise hit the foreign key
+        // before the workspace itself reaches the database - the failure Tomcat reported first.
+        workspaces.saveAndFlush(workspace);
         String workspaceId = workspace.getId();
 
         seedSetting(workspaceId, "sending.window", Map.of(
