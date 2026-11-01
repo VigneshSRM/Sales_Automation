@@ -222,9 +222,14 @@ jobs:
               echo '```'
             fi
             if [ -f /opt/tomcat/logs/catalina.out ]; then
+              echo "Flyway / startup error detail:"
+              echo '```'
+              grep -n -B 4 -A 6 -E "SQL State|Error Code|Message *:|Migration .* failed|Migration V[0-9]+" \
+                /opt/tomcat/logs/catalina.out | tail -n 70
+              echo '```'
               echo "Tomcat log tail:"
               echo '```'
-              tail -n 60 /opt/tomcat/logs/catalina.out
+              tail -n 120 /opt/tomcat/logs/catalina.out
               echo '```'
             fi
           } > "$REPORT"
