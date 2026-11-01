@@ -26,7 +26,7 @@ all timestamps are UTC `DATETIME(6)`; money is `DECIMAL` (never floating point);
 - [`opportunities`](#opportunities) — 30 columns · `V1__core_schema.sql`
 - [`outbox_events`](#outbox-events) — 16 columns · `V1__core_schema.sql`
 - [`pipeline_stages`](#pipeline-stages) — 12 columns · `V1__core_schema.sql`
-- [`roles`](#roles) — 10 columns · `V1__core_schema.sql`
+- [`roles`](#roles) — 9 columns · `V1__core_schema.sql`
 - [`scoring_models`](#scoring-models) — 9 columns · `V1__core_schema.sql`
 - [`services`](#services) — 11 columns · `V1__core_schema.sql`
 - [`stage_history`](#stage-history) — 9 columns · `V1__core_schema.sql`
@@ -667,7 +667,6 @@ Defined in `V1__core_schema.sql`.
 | `name` | VARCHAR(120) NOT NULL |
 | `description` | VARCHAR(255) |
 | `system_role` | BOOLEAN NOT NULL |
-| `capability` | VARCHAR(64) NOT NULL |
 | `created_at` | DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) |
 | `updated_at` | DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) |
 | `row_version` | BIGINT NOT NULL DEFAULT 0 |
@@ -1717,7 +1716,7 @@ Defined in `V5__commercial.sql`.
 - `PRIMARY KEY (id)`
 - `UNIQUE KEY uk_price_book_sku (workspace_id, sku)`
 - `CONSTRAINT fk_price_book_ws FOREIGN KEY (workspace_id) REFERENCES workspaces (id)`
-- `CONSTRAINT fk_price_book_service FOREIGN KEY (service_id) REFERENCES service_offerings (id)`
+- `CONSTRAINT fk_price_book_service FOREIGN KEY (service_id) REFERENCES services (id)`
 
 ## proposals
 

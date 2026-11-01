@@ -226,6 +226,11 @@ def parse_entities() -> list[Table]:
                 ann = " ".join(line.strip() for line in ann_raw.splitlines())
                 if "@ElementCollection" in ann or "@Transient" in ann:
                     continue
+                if any(jtype.startswith(t) for t in ("Set<", "List<", "Collection<", "Map<")):
+                    # Collection mappings live in a join/collection table, never in a column.
+                    # Reading the @Column of a collection field would invent a column that the
+                    # entity does not have (that is how a phantom roles.capability appeared).
+                    continue
                 if "@Id" not in ann and "@Column" not in ann:
                     continue
                 col_name = attr(ann, "name") or camel_to_snake(fname_field)
