@@ -70,7 +70,7 @@ def build_golden(target: Path) -> None:
         for jar in PROVIDED_JARS:
             archive.writestr(f"WEB-INF/lib-provided/{jar}", b"PK\x05\x06" + b"\x00" * 18)
         # The real Next.js export, exactly where the build script puts it.
-        moved = add_tree(archive, STATIC_DIR, "")
+        moved = add_tree(archive, STATIC_DIR, "WEB-INF/classes/static")
         print(f"  golden WAR: {moved} UI file(s) from {STATIC_DIR.relative_to(ROOT)}")
 
 
@@ -79,8 +79,11 @@ def build_broken(target: Path) -> None:
         archive.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n")
         # No launcher class, no UI, no migrations.
         archive.writestr("WEB-INF/lib/tomcat-embed-core-11.0.11.jar", b"x")
+        archive.writestr("WEB-INF/lib/tomcat-embed-el-11.0.11.jar", b"x")
         archive.writestr("WEB-INF/lib/junit-jupiter-5.11.4.jar", b"x")
         archive.writestr("WEB-INF/lib/node_modules/left-pad/index.js", b"x")
+        # A compiled class whose name contains "secret" must NOT be reported as a secret file.
+        archive.writestr("WEB-INF/classes/com/infeara/sales/security/SecretCipher.class", b"x")
         archive.writestr("WEB-INF/classes/application.yml",
                          "app:\n  security:\n    encryption-key: c3VwZXItc2VjcmV0LWtleS1tYXRlcmlhbA==\n")
 

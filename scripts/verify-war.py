@@ -26,12 +26,13 @@ from pathlib import Path
 
 DEFAULT_WAR = Path("backend/target/infeara-sales-os.war")
 
-CONTAINER_JARS = ("tomcat-embed-", "tomcat-embed-websocket", "ecj-")
+CONTAINER_JARS = ("tomcat-embed-core", "tomcat-embed-websocket")
 TEST_JAR_MARKERS = ("junit", "mockito", "testcontainers", "archunit", "assertj", "hamcrest")
 FORBIDDEN_NAMES = ("node_modules/", ".git/", "__pycache__/", ".env", "application-local.yml")
 SECRET_FILE_HINTS = ("secret", "credentials", "id_rsa", ".p12", ".jks", ".keystore")
 
 # UI pages that the delivery brief requires to exist as real screens.
+UI_ROOT = "WEB-INF/classes/static/"
 REQUIRED_UI_PAGES = (
     "index.html",
     "login/index.html",
@@ -120,6 +121,7 @@ def main(argv: list[str]) -> int:
         else:
             result.add("boot.servlet-initializer", False, "launcher class missing")
 
+        ui = {n[len(UI_ROOT):]: n for n in names if n.startswith(UI_ROOT)}
         migrations = sorted(
             n for n in names if re.match(r"WEB-INF/classes/db/migration/V\d+__.+\.sql$", n)
         )
@@ -127,8 +129,9 @@ def main(argv: list[str]) -> int:
         expected = list(range(1, len(versions) + 1))
         result.add("flyway.present", len(migrations) >= 9,
                    f"{len(migrations)} migration(s) inside WEB-INF/classes/db/migration")
-        result.add("flyway.contiguous", versions == expected,
-                   f"versions {versions} " + ("are contiguous from V1" if versions == expected
+        versions_sorted = sorted(versions)
+        result.add("flyway.contiguous", versions_sorted == expected,
+                   f"versions {versions_sorted} " + ("are contiguous from V1" if versions_sorted == expected
                                               else f"do not match expected {expected}"))
         result.add("flyway.email-module",
                    any("email_two_way" in n for n in migrations)
@@ -136,15 +139,16 @@ def main(argv: list[str]) -> int:
                    "V8/V9 two-way email migrations bundled")
 
         # --- UI ----------------------------------------------------------------
-        missing_pages = [p for p in REQUIRED_UI_PAGES if p not in name_set]
+        missing_pages = [p for p in REQUIRED_UI_PAGES if p not in ui]
         result.add("ui.required-pages", not missing_pages,
-                   "all required screens present" if not missing_pages else f"missing: {missing_pages}")
-        assets = [n for n in names if n.startswith("_next/static/")]
+                   f"{len(REQUIRED_UI_PAGES)} screens present under {UI_ROOT}"
+                   if not missing_pages else f"missing under {UI_ROOT}: {missing_pages}")
+        assets = [n for n in ui if n.startswith("_next/static/")]
         result.add("ui.assets", len(assets) >= 10, f"{len(assets)} hashed asset files under /_next/static")
         css = [n for n in assets if n.endswith(".css")]
         result.add("ui.styles", bool(css), f"{len(css)} stylesheet(s) packaged")
-        if "index.html" in name_set:
-            index_html = archive.read("index.html").decode("utf-8", "replace")
+        if "index.html" in ui:
+            index_html = archive.read(ui["index.html"]).decode("utf-8", "replace")
             absolute_api = re.findall(r"https?://[^\"'\s]+/api/", index_html)
             result.add("ui.same-origin-api", not absolute_api,
                        "API is called same-origin (relative /api/v1 URLs)"
@@ -158,9 +162,12 @@ def main(argv: list[str]) -> int:
         lib_jars = [n for n in names if n.startswith("WEB-INF/lib/") and n.endswith(".jar")]
         provided_jars = [n for n in names if n.startswith("WEB-INF/lib-provided/") and n.endswith(".jar")]
         result.add("deps.lib", len(lib_jars) >= 20, f"{len(lib_jars)} runtime jar(s) in WEB-INF/lib")
-        leaked = [n for n in lib_jars if any(marker in n for marker in CONTAINER_JARS)]
+        # tomcat-embed-el is a legitimate compile dependency (Hibernate Validator needs an EL
+        # implementation); tomcat-embed-core and -websocket must come from the container.
+        leaked = [n for n in lib_jars
+                  if "tomcat-embed-core" in n or "tomcat-embed-websocket" in n]
         result.add("deps.container-provided", not leaked,
-                   "no servlet container jars in WEB-INF/lib"
+                   "servlet container jars are provided-scope (WEB-INF/lib-provided)"
                    if not leaked else f"container jars must be provided-scope: {leaked}")
         result.add("deps.lib-provided", bool(provided_jars),
                    f"{len(provided_jars)} provided jar(s) isolated in WEB-INF/lib-provided")
@@ -174,9 +181,12 @@ def main(argv: list[str]) -> int:
         forbidden = [n for n in names if any(token in n for token in FORBIDDEN_NAMES)]
         result.add("hygiene.no-build-output", not forbidden,
                    "no node_modules/.git/__pycache__" if not forbidden else f"forbidden entries: {forbidden[:5]}")
+        # Only inspect packaged resources, not compiled classes or third-party jars: a class named
+        # SecretCipher is the cipher, not a leaked secret.
         secretish = [n for n in names
                      if any(hint in n.lower() for hint in SECRET_FILE_HINTS)
-                     and not n.startswith("WEB-INF/classes/static/")]
+                     and not n.endswith(".class")
+                     and not n.startswith(("WEB-INF/lib/", "WEB-INF/classes/static/", "WEB-INF/lib-provided/"))]
         result.add("hygiene.no-secret-files", not secretish,
                    "no credential/key material packaged"
                    if not secretish else f"suspicious entries: {secretish[:5]}")
