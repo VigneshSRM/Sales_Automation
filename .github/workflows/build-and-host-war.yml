@@ -26,6 +26,10 @@ on:
       - "deploy/**"
       - ".github/workflows/build-and-host-war.yml"
 
+permissions:
+  contents: read
+  issues: write
+
 concurrency:
   group: host-war-${{ github.ref }}
   cancel-in-progress: true
@@ -208,9 +212,14 @@ jobs:
               echo '```'
             fi
           } > "$REPORT"
+          echo "report bytes: $(wc -c < "$REPORT")"
+          head -c 2000 "$REPORT" || true
           if [ -s "$REPORT" ]; then
-            gh api "repos/${{ github.repository }}/issues/1/comments" -F body=@"$REPORT" >/dev/null \
-              && echo "report posted to issue #1" || echo "could not post report"
+            gh api "repos/${{ github.repository }}/issues/1/comments" \
+              -F "body=@$REPORT" >/dev/null && echo "report posted to issue #1"
+          else
+            gh api "repos/${{ github.repository }}/issues/1/comments" \
+              -f body="Run ${{ github.run_id }} failed before producing output." >/dev/null || true
           fi
 
       - name: Upload WAR and logs
