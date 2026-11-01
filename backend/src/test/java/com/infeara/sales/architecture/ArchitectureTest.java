@@ -1,7 +1,7 @@
 package com.infeara.sales.architecture;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
-import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noFields;
 
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
@@ -58,9 +58,10 @@ class ArchitectureTest {
     @Test
     @DisplayName("constructor injection only — no field injection in beans")
     void noFieldInjection() {
-        ArchRule rule = noClasses()
-                .that().haveSimpleNameEndingWith("Service")
-                .should().haveFieldsAnnotatedWith("org.springframework.beans.factory.annotation.Autowired");
+        // Fields declared in *Service classes must not carry @Autowired: constructor injection only.
+        ArchRule rule = noFields()
+                .that().areDeclaredInClassesThat().haveSimpleNameEndingWith("Service")
+                .should().beAnnotatedWith("org.springframework.beans.factory.annotation.Autowired");
         rule.check(classes);
     }
 }
