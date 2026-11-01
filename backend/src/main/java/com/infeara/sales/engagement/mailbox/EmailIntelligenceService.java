@@ -287,7 +287,8 @@ public class EmailIntelligenceService {
         }
 
         boolean autoSend = "AUTOMATIC".equals(decision.mode()) && decision.mayAutoSend();
-        EmailMessage draft = buildReplyDraft(message, analysis, context, autoSend);
+        EmailMessage draft = buildReplyDraft(message, analysis, context, autoSend,
+                autoSend ? decision.delaySeconds() : 0);
         if (autoSend) {
             audit.recordSystem(message.getWorkspaceId(), "EMAIL_AUTO_REPLY_QUEUED", "EMAIL_MESSAGE",
                     draft.getId(), Map.of("policyRule", String.valueOf(decision.ruleName()),
@@ -316,7 +317,7 @@ public class EmailIntelligenceService {
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public EmailMessage buildReplyDraft(EmailMessage inbound, EmailAnalysis analysis, MessageContext context,
-                                        boolean queueImmediately) {
+                                        boolean queueImmediately, int delaySeconds) {
         EmailMessage draft = new EmailMessage();
         draft.setId(Ids.newId());
         draft.setWorkspaceId(inbound.getWorkspaceId());
@@ -334,6 +335,11 @@ public class EmailIntelligenceService {
         draft.setBodyHtml(toHtml(analysis.getReplyDraft()));
         draft.setBodyText(analysis.getReplyDraft());
         draft.setStatus(queueImmediately ? "QUEUED" : "PENDING_APPROVAL");
+        if (queueImmediately && delaySeconds > 0) {
+            // Policy delay ("answer after 10 minutes, not instantly") is expressed as a schedule,
+            // so the dispatcher — not a sleeping thread — performs the send.
+            draft.setScheduledAt(clock.instant().plusSeconds(delaySeconds));
+        }
         draft.setMessageKey("ai-reply:" + inbound.getId());
         draft.setInReplyToHeader(inbound.getMessageIdHeader());
         draft.setReferencesHeader((inbound.getReferencesHeader() == null ? ""
