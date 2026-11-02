@@ -196,19 +196,47 @@ jobs:
             -e "SELECT COUNT(*) AS tables_created FROM information_schema.tables WHERE table_schema='infeara_sales';
                 SELECT version, success FROM flyway_schema_history ORDER BY installed_rank;" || true
 
+      - name: Collect deployment evidence
+        if: always()
+        run: |
+          set +e
+          {
+            echo "#### Runtime evidence (Tomcat 11, single ROOT.war, http://localhost:8080)"
+            echo '```'
+            echo "GET /actuator/health  -> $(curl -s -m 15 http://localhost:8080/actuator/health)"
+            echo "GET /                 -> $(curl -s -m 15 -o /tmp/probe.html -w '%{http_code}' http://localhost:8080/) bytes=$(wc -c < /tmp/probe.html 2>/dev/null)"
+            echo "GET /leads/           -> $(curl -s -m 15 -o /dev/null -w '%{http_code}' http://localhost:8080/leads/)"
+            echo "GET /engagement/mailbox/ -> $(curl -s -m 15 -o /dev/null -w '%{http_code}' http://localhost:8080/engagement/mailbox/)"
+            echo "GET /api/v1/auth/me   -> $(curl -s -m 15 -w ' http=%{http_code}' http://localhost:8080/api/v1/auth/me)"
+            echo "GET /v3/api-docs      -> $(curl -s -m 30 -o /tmp/openapi.json -w '%{http_code}' http://localhost:8080/v3/api-docs)"
+            echo "OpenAPI paths         -> $(grep -o '\"/api/[^\"]*\"' /tmp/openapi.json 2>/dev/null | sort -u | wc -l)"
+            echo '```'
+            echo
+            echo "#### Database after the first boot"
+            echo '```'
+            mariadb -h 127.0.0.1 -u infeara_app -pci_app_password infeara_sales \
+              -e "SELECT COUNT(*) AS tables_created FROM information_schema.tables WHERE table_schema='infeara_sales';" 2>/dev/null
+            mariadb -h 127.0.0.1 -u infeara_app -pci_app_password infeara_sales \
+              -e "SELECT version, description, success FROM flyway_schema_history ORDER BY installed_rank;" 2>/dev/null
+            mariadb -h 127.0.0.1 -u infeara_app -pci_app_password infeara_sales \
+              -e "SELECT (SELECT COUNT(*) FROM capabilities) AS capabilities, (SELECT COUNT(*) FROM roles) AS roles, (SELECT COUNT(*) FROM users) AS users, (SELECT COUNT(*) FROM audit_logs) AS audit_rows;" 2>/dev/null
+            echo '```'
+          } > /tmp/evidence.md 2>&1
+          cat /tmp/evidence.md
+
       - name: Publish the build/startup report to the tracking issue
-        if: failure()
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set +e
           REPORT=/tmp/report.md
           {
-            echo "### Run ${{ github.run_id }} — failure"
+            echo "### Run ${{ github.run_id }} — ${{ job.status }}"
             echo
             echo "Ref: \`${{ github.ref_name }}\` · commit \`${GITHUB_SHA:0:8}\` · [job](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
             echo
-            if [ -f /tmp/mvn.log ]; then
+            if [ -f /tmp/mvn.log ] && [ "${{ job.status }}" != "success" ]; then
               echo "Compiler diagnostics (deduplicated, first 220):"
               echo '```'
               grep -E "^\[ERROR\].*\.java:\[" /tmp/mvn.log | sed -E 's#.*/com/infeara/sales/##' | sort -u | head -220
@@ -227,7 +255,11 @@ jobs:
               tail -n 40 /tmp/verify.log
               echo '```'
             fi
-            if [ -f /opt/tomcat/logs/catalina.out ]; then
+            if [ -f /tmp/evidence.md ]; then
+              cat /tmp/evidence.md
+              echo
+            fi
+            if [ -f /opt/tomcat/logs/catalina.out ] && [ "${{ job.status }}" != "success" ]; then
               echo "Flyway / startup error detail:"
               echo '```'
               grep -n -B 4 -A 6 -E "SQL State|Error Code|Message *:|Migration .* failed|Migration V[0-9]+" \
