@@ -42,3 +42,7 @@ deploy/artifacts/
 *.iml
 .DS_Store
 Thumbs.db
+
+# Python bytecode from the verification scripts
+__pycache__/
+*.pyc

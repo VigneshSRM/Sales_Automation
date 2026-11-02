@@ -118,6 +118,7 @@ def sample_path(pattern: str) -> str:
 
 
 def fixture_routes() -> list[str]:
+    sys.dont_write_bytecode = True  # importing the fixture table must not litter scripts/__pycache__
     spec = importlib.util.spec_from_file_location("preview_api", ROOT / "scripts/preview-api.py")
     module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
     assert spec and spec.loader
