@@ -24,6 +24,76 @@ there is one process, one origin, and no CORS in production.
 | Tomcat 10.1 / Tomcat 9 / Jetty / embedded bootJar | **Not supported** | The WAR targets Servlet 6.1 (Jakarta EE 11) |
 | Container image | **Not provided** | The approved architecture is a WAR on Tomcat; dev-only infrastructure uses Docker (`deploy/docker-compose.dev.yml`) |
 
+### What is installed on the host — and what ships inside the WAR
+
+**Rule: a server needs a Java 17 runtime and Apache Tomcat 11. Nothing else.** Every library the
+application uses is packaged inside the WAR as a jar. If a new requirement appears, add the jar to
+the **WAR** and rebuild — never install it into Tomcat, and never copy an application jar into
+`$CATALINA_HOME/lib`.
+
+| Installed on the host | Needed at runtime | Purpose |
+| --- | --- | --- |
+| JDK/JRE 17 | **yes** | Runs Tomcat and the JVM |
+| Apache Tomcat 11.0.x | **yes** | Servlet 6.1 container; the WAR is descriptor-free |
+| MariaDB 11.4 server | **yes**, as an external service | The database is a separate process, not a library — no jar can replace it in production |
+| Maven 3.9, Node.js 22 | **no** | Build machine only: they produce the WAR. A production host that only deploys a pre-built WAR does not need either |
+
+| Inside the WAR | Count (verified in CI) | Examples |
+| --- | --- | --- |
+| `WEB-INF/lib/*.jar` — all application dependencies | **101** | Spring Framework 7, Spring Security 7, Hibernate 7 + Jakarta Persistence, HikariCP, **MariaDB JDBC driver**, Flyway core + `flyway-mysql`, Jackson 3, springdoc + Swagger UI, Jakarta Mail (Angus), BouncyCastle (TOTP), Logback, Micrometer/Actuator |
+| `WEB-INF/lib-provided/*.jar` — supplied by the container instead | **4** | `tomcat-embed-core`, `tomcat-embed-websocket`, `tomcat-embed-el` and friends: Tomcat already has them, so they are `provided` scope and deployed as `lib-provided` |
+| `WEB-INF/classes/` | — | The application itself: compiled classes, `application*.yml`, `db/migration/V1`–`V10`, the exported UI under `static/` |
+
+Two of the 24 assertions in `scripts/verify-war.py` exist to keep this true:
+`deps.container-provided` (the servlet container jars must **not** be duplicated inside
+`WEB-INF/lib`) and `deps.lib-provided` (they must be present in `WEB-INF/lib-provided`).
+
+#### Where a jar may go
+
+| Location | Allowed? | Consequence |
+| --- | --- | --- |
+| `WEB-INF/lib` inside the WAR | **Yes — the default and only supported place for an application library** | Versioned in `pom.xml`, travels with the artefact, verified on every build |
+| `WEB-INF/lib-provided` | Only for what Tomcat supplies | Must match the container version; never put application libraries here |
+| `$CATALINA_HOME/lib` | **No** for application libraries | Invisible to the WAR, absent from git and from the next host, shared by every deployed context, and untestable by the packaging gate — it silently turns "one artefact" back into "a hand-tuned server" |
+
+#### Adding a dependency (the supported procedure)
+
+```bash
+# 1. Declare it — compile scope unless the container provides it
+$EDITOR backend/pom.xml
+
+# 2. Rebuild the UI + WAR and re-run the packaging contract
+./scripts/build-war.sh
+
+# 3. Deploy the new WAR (replaces the old one atomically)
+sudo ./scripts/host-app.sh
+```
+
+Do not unzip/edit a deployed WAR by hand and do not drop jars into Tomcat. A WAR that needs
+`$CATALINA_HOME/lib` beyond the servlet container is a packaging bug: fix the `pom.xml` scope.
+
+#### Things that can never be a jar
+
+| Requirement | Where it lives |
+| --- | --- |
+| MariaDB 11.4 | Installed service on the host (or a managed instance) |
+| TLS certificate for the public hostname | Reverse proxy (§11) |
+| SMTP/IMAP passwords, Calendly signing key | Database, AES-256-GCM encrypted with `SMTP_SECRET_ENCRYPTION_KEY` |
+| Encryption key, AI provider keys, database password | Injected environment / external properties file — never in the WAR |
+
+#### Verify it yourself
+
+```bash
+WAR=dist/infeara-sales-os.war
+unzip -l $WAR | grep -c 'WEB-INF/lib/[^/]*\.jar$'            # 101  runtime jars inside the WAR
+unzip -l $WAR | grep -c 'WEB-INF/lib-provided/[^/]*\.jar$'   # 4    supplied by Tomcat
+python3 scripts/verify-war.py $WAR                            # 24/24 packaging assertions
+```
+
+If a class is missing at runtime (`NoClassDefFoundError`, `ClassNotFoundException`), the jar is
+missing from the **WAR** — add the dependency to `pom.xml` and rebuild. Copying the jar into
+Tomcat's `lib/` "fixes" one host and breaks every other one, including CI.
+
 ---
 
 ## 1. Before you start
@@ -36,17 +106,18 @@ Checklist:
 - [ ] 2 vCPU / 4 GB RAM / 20 GB disk recommended (75.8 MB WAR + Tomcat + Maven repo + npm cache; DB grows with data)
 - [ ] A DNS name and, for anything non-local, TLS in front of Tomcat
 - [ ] A secret store (Vault, AWS/GCP Secret Manager, systemd `EnvironmentFile` with `0600`, …) for the values generated in §7
+- [ ] Nothing else on the host: no Maven, no Node, no application jars in Tomcat — those live in the WAR (§0)
 
 Versions are pinned and verified in `docs/architecture/compatibility.md`:
 
-| Component | Pinned | Why |
-| --- | --- | --- |
-| Java | 17 | Source/target level of the project |
-| Spring Boot | 4.0.9 | Spring Framework 7 / Security 7 / Servlet 6.1 |
-| Tomcat | 11.0.27 | Servlet 6.1; the exact patch CI runs |
-| MariaDB | 11.4 LTS | Only supported database |
-| Maven | 3.9.11 | Build |
-| Node.js | 22 | UI static export |
+| Component | Pinned | Where it lives | Why |
+| --- | --- | --- | --- |
+| Java | 17 | **Host, runtime** | Source/target level of the project |
+| Tomcat | 11.0.27 | **Host, runtime** | Servlet 6.1; the exact patch CI runs |
+| MariaDB | 11.4 LTS | **Host, external service** | Only supported database |
+| Spring Boot / Spring / Hibernate / JDBC driver / Flyway / Jackson / springdoc / mail / BouncyCastle / Logback | 4.0.9 and its managed versions | **Inside the WAR** (`WEB-INF/lib`, 101 jars) | Nothing to install on the server |
+| Maven | 3.9.11 | Build machine only | Produces the WAR |
+| Node.js | 22 | Build machine only | UI static export |
 
 ---
 
@@ -528,6 +599,9 @@ The database is the only place your business data lives — dump it before dropp
 | Inbound mail not arriving | Mailbox not `ACTIVE`, sync disabled, or discovery off | Verify a passing connection test, enable sync, check `catalina.out` for `MAILBOX_SYNC` jobs |
 | Jobs piling up | `WORKER_ENABLED=false` | Enable it on exactly one node |
 | OutOfMemoryError under load | Heap too small for attachments | `CATALINA_OPTS -Xmx`, and lower `EMAIL_INBOUND_MAX_ATTACHMENT_BYTES` |
+| `NoClassDefFoundError` / `ClassNotFoundException` at startup | The jar is not inside the WAR | Add the dependency to `backend/pom.xml` and rebuild — do **not** copy it into `$CATALINA_HOME/lib` |
+| The app runs on one host but not another | Someone installed jars into Tomcat's `lib/` on the working host | Re-deploy the verified WAR; application libraries belong in `WEB-INF/lib` only |
+| `verify-war.py` fails on `deps.container-provided` | The servlet container was pulled in as a compile dependency | Keep `spring-boot-starter-tomcat` at `provided` scope |
 
 Log locations: `$CATALINA_BASE/logs/catalina.out` (application + startup),
 `$CATALINA_BASE/logs/access.*.log` (access log, query strings stripped),

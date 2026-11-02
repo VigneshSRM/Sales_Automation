@@ -53,16 +53,28 @@ fixture data) — see the last section.
 
 ## Prerequisites
 
-| Component | Version | Notes |
-| --- | --- | --- |
-| JDK | **17** (LTS) | Must include `javac` — a JRE cannot build the WAR. Temurin/OpenJDK both fine. |
-| Maven | **3.9+** | Only needed to build; not needed to run. |
-| Apache Tomcat | **11.0.x** | Servlet 6.1 required by Spring Boot 4. Tomcat 10.1 or earlier will not deploy this WAR. |
-| MariaDB | **11.4 LTS** | Only supported database. MySQL 8 is not tested; no other engine is supported. |
-| Node.js | **22 LTS** | Builds the UI into `backend/src/main/resources/static`. |
-| Docker | any recent | Path B only, for MariaDB + Mailpit. |
-| OS | Debian/Ubuntu or RHEL/Rocky/Alma | The installer detects `apt`/`dnf`/`yum`. |
-| Network | `adoptium.net`, `archive.apache.org`, `r.mariadb.com`, Maven Central, `registry.npmjs.org` | The sandbox this repository was authored in blocks all but the last two — see `docs/operations/sandbox-environment.md`. |
+**A server needs a Java 17 runtime and Apache Tomcat 11 — nothing else.** Every library the
+application uses ships inside the WAR (101 runtime jars in `WEB-INF/lib`, verified on every build);
+Tomcat supplies only the servlet container (4 jars, `provided` scope). Maven and Node are build-time
+tools: they produce the artefact and are not required where it runs. If a new library is ever needed,
+it goes into `backend/pom.xml` and the WAR is rebuilt — **never** installed into Tomcat, and never
+copied into `$CATALINA_HOME/lib`.
+
+| Component | Version | Where it is needed | Notes |
+| --- | --- | --- | --- |
+| Java | **17** (LTS) | **Host, at runtime** | Must include `javac` if you are also building. Temurin/OpenJDK both fine. |
+| Apache Tomcat | **11.0.x** | **Host, at runtime** | Servlet 6.1 required by Spring Boot 4. Tomcat 10.1 or earlier will not deploy this WAR. |
+| MariaDB | **11.4 LTS** | **Host, external service** | A separate process, not a library; no jar can replace it. MySQL 8 is not tested. |
+| Maven | **3.9+** | Build machine only | Produces the WAR. Not needed to run it. |
+| Node.js | **22 LTS** | Build machine only | Builds the UI into `backend/src/main/resources/static`. |
+| Docker | any recent | Path B only | Development MariaDB + Mailpit. |
+| OS | Debian/Ubuntu or RHEL/Rocky/Alma | Host | The installer detects `apt`/`dnf`/`yum`. |
+| Network | `adoptium.net`, `archive.apache.org`, `r.mariadb.com`, Maven Central, `registry.npmjs.org` | Build/deploy time | Needed only while installing the toolchain or downloading dependencies. The sandbox this repository was authored in blocks all but the last two — see `docs/operations/sandbox-environment.md`. |
+
+Dependency placement, in one line: application libraries live in `WEB-INF/lib` **inside the WAR**;
+`WEB-INF/lib-provided` holds only what Tomcat itself supplies; `$CATALINA_HOME/lib` is not for
+application jars. Full rules, the "adding a dependency" procedure and the self-check commands are in
+`docs/operations/installation-setup.md` §0.
 
 Disk ~2 GB (75.8 MB WAR, Tomcat, Maven repo, npm cache). RAM 2 GB minimum for Tomcat; the worker
 runs inside the same JVM as the API.
@@ -108,7 +120,8 @@ Open **http://localhost:8080/** — the UI and the API are the same WAR on the s
 2. **`verify-toolchain.sh`** asserts `javac` 17, Maven 3.9+, Tomcat 11 (reads
    `bin/version.sh`), a MariaDB client and Node 20+. Exit code 1 = do not build.
 3. **`build-war.sh`** runs `npm ci && npm run build` (static export → `backend/src/main/resources/static`),
-   then `mvn package` with the container at `provided` scope, then `scripts/verify-war.py`. Output:
+   then `mvn package` with the container at `provided` scope, then `scripts/verify-war.py`, which
+   also asserts the WAR is self-contained (no container jars duplicated into `WEB-INF/lib`). Output:
    `dist/infeara-sales-os.war` plus 24 printed assertions.
 4. **`host-app.sh`** creates the database and a least-privilege application user (DML + DDL only, no
    `GRANT`/`CREATE USER`), generates the AES-256-GCM key and the bootstrap password, writes
@@ -247,6 +260,8 @@ Notes that save real debugging time:
 | `AI_PROVIDER_UNAVAILABLE` | No AI key configured | Expected: set `AI_OPENROUTER_API_KEY` or `AI_OPENAI_API_KEY` |
 | Build fails at `verify-toolchain.sh` | Wrong JDK/Tomcat/Node | Install the pinned versions; do not patch the gate |
 | UI loads unstyled | Assets served from another origin | Serve from the same WAR/root context |
+| `NoClassDefFoundError` / `ClassNotFoundException` | A jar is missing from the WAR | Add the dependency to `backend/pom.xml`, rebuild, redeploy — do not copy jars into Tomcat's `lib/` |
+| Works on one host, not another | Someone added jars to `$CATALINA_HOME/lib` on the working host | Redeploy the verified WAR; application libraries belong in `WEB-INF/lib` only |
 
 ## Design preview without a JDK
 
