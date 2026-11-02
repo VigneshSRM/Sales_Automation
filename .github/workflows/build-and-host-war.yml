@@ -640,12 +640,21 @@ jobs:
           Copy-Item dist\ROOT.war "$env:CATALINA_HOME\webapps\ROOT.war" -Force
 
           # CRLF is required: catalina.bat is parsed by cmd.exe. -Encoding ASCII keeps it plain.
+          # Spring Boot fails the whole context when a non-optional config location is missing,
+          # and Tomcat then serves nothing - which looks exactly like a hang. Check first.
+          foreach ($f in @("$($paths.conf)/infeara.properties", "$($paths.conf)/logs.properties")) {
+            $exists = Test-Path ($f -replace '/', '\')
+            Write-Host "config file $f exists=$exists"
+            if (-not $exists) { throw "Required configuration file is missing: $f" }
+          }
+          New-Item -ItemType Directory -Force -Path (Join-Path $env:INFEARA_DATA 'logs\access') | Out-Null
+
           $setenv = @"
           @echo off
           set "JAVA_HOME=$env:JAVA_HOME"
           set "CATALINA_OPTS=-Xms512m -Xmx1536m -Dfile.encoding=UTF-8 -Duser.timezone=UTC"
           set "SPRING_PROFILES_ACTIVE=prod"
-          set "SPRING_CONFIG_ADDITIONAL_LOCATION=file:$($paths.conf)/infeara.properties,file:$($paths.logs)/logs.properties"
+          set "SPRING_CONFIG_ADDITIONAL_LOCATION=file:$($paths.conf)/infeara.properties,file:$($paths.conf)/logs.properties"
           "@
           Set-Content -Path "$env:CATALINA_HOME\bin\setenv.bat" -Value $setenv -Encoding ASCII
           Get-Content "$env:CATALINA_HOME\bin\setenv.bat"
@@ -760,10 +769,10 @@ jobs:
           }
           # Tomcat's own log files are complete: redirected stdout is buffered and truncated
           # when the process is killed, which hides the real startup error.
-          foreach ($dir in @('C:\tomcat\logs', (Join-Path $env:INFEARA_DATA 'logs'))) {
+          foreach ($dir in @('C:\tomcat\logs', (Join-Path $env:INFEARA_DATA 'logs'), (Join-Path $env:INFEARA_DATA 'conf'))) {
             if (-not (Test-Path $dir)) { continue }
-            Get-ChildItem $dir -Filter '*.log' -File -ErrorAction SilentlyContinue |
-              Sort-Object LastWriteTime -Descending | Select-Object -First 4 | ForEach-Object {
+            Get-ChildItem $dir -Filter '*.log*' -File -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending | Select-Object -First 6 | ForEach-Object {
                 $report += "#### $($_.FullName) ($($_.Length) bytes)"
                 $report += '```'
                 $report += (Get-Content $_.FullName -Tail 100 -ErrorAction SilentlyContinue) -join "`n"
