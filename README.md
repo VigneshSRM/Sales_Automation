@@ -47,8 +47,14 @@ Two paths are supported. Pick the one that matches what you are doing.
 | --- | --- | --- |
 | **A. Tomcat 11 (production)** | The real, supported deployment: one WAR, UI + API on one origin | Linux host, root/sudo, outbound HTTPS |
 | **B. Local development** | Changing the code, running tests, live reload | JDK 17, Node 22, Docker |
+| **C. Windows Server** | The same WAR on Windows Server 2019/2022, Tomcat as a Windows service, IIS for TLS | Java 17, Tomcat 11, PowerShell, MariaDB |
 
-A third path exists for review environments where no JDK can be installed (design preview with
+Path C is documented separately because Windows differs where it matters: `setenv.bat` instead of
+`setenv.sh`, a Procrun service that ignores `setenv.bat`, `icacls` instead of `chmod`, forward-slash
+paths in `.properties` files, and a file lock that blocks WAR replacement while Tomcat runs. It is
+verified by a dedicated `windows-2022` CI job. See `docs/operations/windows-deployment.md`.
+
+A fourth path exists for review environments where no JDK can be installed (design preview with
 fixture data) — see the last section.
 
 ## Prerequisites
@@ -68,7 +74,7 @@ copied into `$CATALINA_HOME/lib`.
 | Maven | **3.9+** | Build machine only | Produces the WAR. Not needed to run it. |
 | Node.js | **22 LTS** | Build machine only | Builds the UI into `backend/src/main/resources/static`. |
 | Docker | any recent | Path B only | Development MariaDB + Mailpit. |
-| OS | Debian/Ubuntu or RHEL/Rocky/Alma | Host | The installer detects `apt`/`dnf`/`yum`. |
+| OS | Debian/Ubuntu or RHEL/Rocky/Alma · **Windows Server 2019/2022** | Host | Linux: the installer detects `apt`/`dnf`/`yum`. Windows: PowerShell scripts in `scripts/windows` (see `docs/operations/windows-deployment.md`). |
 | Network | `adoptium.net`, `archive.apache.org`, `r.mariadb.com`, Maven Central, `registry.npmjs.org` | Build/deploy time | Needed only while installing the toolchain or downloading dependencies. The sandbox this repository was authored in blocks all but the last two — see `docs/operations/sandbox-environment.md`. |
 
 Dependency placement, in one line: application libraries live in `WEB-INF/lib` **inside the WAR**;
@@ -259,6 +265,8 @@ Notes that save real debugging time:
 | `UNSUPPORTED_OPERATION` on a mailbox | Provider is Gmail API / Microsoft Graph | Only IMAP is implemented; non-IMAP providers return 501 by design |
 | `AI_PROVIDER_UNAVAILABLE` | No AI key configured | Expected: set `AI_OPENROUTER_API_KEY` or `AI_OPENAI_API_KEY` |
 | Build fails at `verify-toolchain.sh` | Wrong JDK/Tomcat/Node | Install the pinned versions; do not patch the gate |
+| On Windows: "Access is denied" replacing `ROOT.war` | Tomcat locks the extracted jar files | `Stop-Service InfearaSalesOS`, delete `webapps\ROOT` **and** `ROOT.war`, copy, start |
+| On Windows: log file appears at `C:ProgramDatalog…` | Backslashes in `.properties` are escapes | Use forward slashes: `C:/ProgramData/Infeara/logs` |
 | UI loads unstyled | Assets served from another origin | Serve from the same WAR/root context |
 | `NoClassDefFoundError` / `ClassNotFoundException` | A jar is missing from the WAR | Add the dependency to `backend/pom.xml`, rebuild, redeploy — do not copy jars into Tomcat's `lib/` |
 | Works on one host, not another | Someone added jars to `$CATALINA_HOME/lib` on the working host | Redeploy the verified WAR; application libraries belong in `WEB-INF/lib` only |
@@ -298,6 +306,9 @@ dist/         Build output (gitignored)
 | `docs/operations/deployment-attempt-2026-11-02.md` | Exactly what was executed, including the failures |
 | `docs/operations/sandbox-environment.md` | Which verification steps ran here and which are scripted only |
 | `docs/operations/backup-recovery.md` | Backup, restore, disaster recovery |
+| **`docs/operations/windows-deployment.md`** | **Windows Server 2019/2022 deployment: PowerShell toolchain, Tomcat service, external config, IIS TLS, upgrade and troubleshooting** |
+| `docs/operations/windows-development.md` | Windows 10/11 developer setup |
+| `docs/operations/windows-containers.md` | Windows container image (approved deviation, unverified) |
 | `docs/operations/design-preview.md` | Reviewing the UI without a JDK |
 | `docs/requirements/SRS.md`, `docs/requirements/business-rules.md`, `docs/requirements/traceability-matrix.md` | Requirements and BR-* rules |
 | `docs/architecture/system-architecture.md`, `docs/architecture/architecture-decisions.md`, `docs/architecture/compatibility.md` | Layering, ADRs, pinned version matrix |

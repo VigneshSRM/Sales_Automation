@@ -1,0 +1,26 @@
+# ---------------------------------------------------------------------------
+# MariaDB 11.4 configuration for Infeara Sales OS on Windows.
+#
+# Rendered by scripts/windows/install-toolchain.ps1 with real paths, then referenced
+# from the MariaDB service. On a server where MariaDB is already installed, copy these
+# values into whichever my.ini that installation uses and restart the service.
+#
+# Two Windows-specific points:
+#   * default-time-zone must be an OFFSET ('+00:00'). Windows MariaDB does not ship
+#     populated timezone tables, so the named form ('UTC') is rejected at startup.
+#   * paths use forward slashes; backslashes are escape characters in option files.
+# ---------------------------------------------------------------------------
+[mysqld]
+character-set-server = utf8mb4
+collation-server     = utf8mb4_unicode_ci
+default-time-zone    = +00:00
+innodb-buffer-pool-size = 512M
+max_connections      = 200
+# Data directory: keep it off the system drive if you have one
+datadir              = {{DATA_DIR}}
+# Log rotation is handled by the installer's defaults; do not enable Windows-native
+# log rotation for the error log without checking the MariaDB service account's rights.
+log-error            = {{DATA_DIR}}/mariadb-error.log
+
+[client]
+default-character-set = utf8mb4
