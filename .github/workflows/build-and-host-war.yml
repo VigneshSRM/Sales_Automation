@@ -226,7 +226,9 @@ jobs:
             echo
             echo "#### Backend test suite (informational, does not gate deployment)"
             echo '```'
-            grep -E "Tests run:|BUILD (SUCCESS|FAILURE)|^\[ERROR\]" /tmp/test.log 2>/dev/null | head -30
+            grep -E "Tests run:|BUILD (SUCCESS|FAILURE)" /tmp/test.log 2>/dev/null | head -12
+            grep -A 4 "Architecture Violation" /tmp/test.log 2>/dev/null | head -40
+            grep -E "^\[ERROR\]   [A-Z][A-Za-z]*(Test|IT)\." /tmp/test.log 2>/dev/null | head -10
             echo '```'
             echo
             echo "#### Authenticated API through the same WAR"
