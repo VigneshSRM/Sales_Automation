@@ -364,7 +364,7 @@ jobs:
     env:
       TOMCAT_VERSION: "11.0.27"
       DB_HOST: 127.0.0.1
-      DB_PORT: "3306"
+      DB_PORT: "3307"
       DB_NAME: infeara_sales
       DB_USER: infeara_app
       DB_PASSWORD: ci_app_password_windows
@@ -455,43 +455,69 @@ jobs:
           Copy-Item $war dist\infeara-sales-os.war -Force
           Copy-Item $war dist\ROOT.war -Force
 
-      - name: Install and configure MariaDB 11.4
+      - name: Install and configure MariaDB 11.4 (portable, port 3307)
         shell: pwsh
         run: |
-          choco install mariadb --version=11.4.5 -y --no-progress
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "Pinned version unavailable; installing the latest 11.x"
-            choco install mariadb -y --no-progress
+          # Deterministic by design: the runner image ships a MySQL server that already owns
+          # port 3306, and a Chocolatey MariaDB would fight it for the port and the service
+          # name. A portable ZIP on its own port and datadir cannot collide with anything.
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://archive.mariadb.org/mariadb-11.4.5/winx64-packages/mariadb-11.4.5-winx64.zip'
+          Invoke-WebRequest -Uri $url -OutFile C:\mariadb.zip -UseBasicParsing
+          Expand-Archive C:\mariadb.zip -DestinationPath C:\mariadb-extract -Force
+          $inner = Get-ChildItem C:\mariadb-extract -Directory | Select-Object -First 1
+          Move-Item $inner.FullName C:\mariadb
+          Remove-Item -Recurse -Force C:\mariadb.zip, C:\mariadb-extract
+          Write-Host "MariaDB unpacked to C:\mariadb"
+          & C:\mariadb\bin\mariadbd.exe --version
+
+          # Initialise a fresh data directory. No root password in CI: the instance is
+          # ephemeral and listens on localhost only.
+          & C:\mariadb\bin\mariadb-install-db.exe --datadir=C:\mariadb-data `
+              --password= --auth-root-authentication-method=normal `
+              --default-time-zone=+00:00 2>&1 | Select-Object -Last 5
+          if ($LASTEXITCODE -ne 0) { throw "mariadb-install-db failed with $LASTEXITCODE" }
+
+          # Start the server detached; keep its console output for diagnostics.
+          $server = Start-Process -FilePath C:\mariadb\bin\mariadbd.exe `
+            -ArgumentList '--datadir=C:\mariadb-data','--port=3307','--console',`
+                          '--default-time-zone=+00:00','--character-set-server=utf8mb4',`
+                          '--collation-server=utf8mb4_unicode_ci','--bind-address=127.0.0.1' `
+            -RedirectStandardOutput C:\mariadb-server.out -RedirectStandardError C:\mariadb-server.err `
+            -PassThru -WindowStyle Hidden
+          $server.Id | Out-File C:\mariadb.pid -Encoding ASCII
+          Write-Host "mariadbd PID $($server.Id)"
+
+          $client = 'C:\mariadb\bin\mariadb.exe'
+          $ready = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            & $client --protocol=TCP -h 127.0.0.1 -P 3307 -u root -e 'SELECT 1' 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { Write-Host "MariaDB accepting connections after $i s"; $ready = $true; break }
+            Start-Sleep -Seconds 1
           }
-          $mariadb = Get-Command mariadb -ErrorAction SilentlyContinue
-          if (-not $mariadb) {
-            $fallback = Get-ChildItem 'C:\tools\mariadb*\bin\mariadb.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($fallback) { $env:Path = "$($fallback.Directory.FullName);$env:Path" } else { throw 'mariadb client not found after install' }
+          if (-not $ready) {
+            Write-Host '---- mariadb-server.err ----'
+            Get-Content C:\mariadb-server.err -Tail 60 -ErrorAction SilentlyContinue
+            Write-Host '---- mariadb-server.out ----'
+            Get-Content C:\mariadb-server.out -Tail 60 -ErrorAction SilentlyContinue
+            throw 'MariaDB did not start on port 3307'
           }
-          if (-not (Get-Service MariaDB -ErrorAction SilentlyContinue)) {
-            Write-Host "Service missing; looking for another service name"
-            Get-Service | Where-Object { $_.Name -match 'maria|mysql' } | Format-Table -AutoSize
-          } else {
-            Set-Service MariaDB -StartupType Automatic
-            Start-Service MariaDB -ErrorAction SilentlyContinue
-          }
-          # Wait for the server socket to accept connections.
-          for ($i = 0; $i -lt 30; $i++) {
-            & mariadb --protocol=TCP -h 127.0.0.1 -u root -e "SELECT 1" 2>$null
-            if ($LASTEXITCODE -eq 0) { Write-Host "MariaDB is up after $i attempt(s)"; break }
-            Start-Sleep -Seconds 2
-          }
-          & mariadb --protocol=TCP -h 127.0.0.1 -u root -e "SELECT VERSION(), @@character_set_server, @@collation_server, @@time_zone;"
-          & mariadb --protocol=TCP -h 127.0.0.1 -u root -e @"
+
+          & $client --protocol=TCP -h 127.0.0.1 -P 3307 -u root -e "SELECT VERSION() AS version, @@character_set_server AS charset, @@collation_server AS collation, @@time_zone AS tz;"
+          $sql = @"
           CREATE DATABASE IF NOT EXISTS infeara_sales CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
           CREATE USER IF NOT EXISTS 'infeara_app'@'localhost' IDENTIFIED BY '$env:DB_PASSWORD';
-          CREATE USER IF NOT EXISTS 'infeara_app'@'%' IDENTIFIED BY '$env:DB_PASSWORD';
+          CREATE USER IF NOT EXISTS 'infeara_app'@'127.0.0.1' IDENTIFIED BY '$env:DB_PASSWORD';
           GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON infeara_sales.* TO 'infeara_app'@'localhost';
-          GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON infeara_sales.* TO 'infeara_app'@'%';
+          GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON infeara_sales.* TO 'infeara_app'@'127.0.0.1';
           FLUSH PRIVILEGES;
           "@
+          $sqlFile = 'C:\mariadb-grant.sql'
+          [System.IO.File]::WriteAllText($sqlFile, $sql, (New-Object System.Text.UTF8Encoding($false)))
+          & $client --protocol=TCP -h 127.0.0.1 -P 3307 -u root -e "source C:/mariadb-grant.sql"
           if ($LASTEXITCODE -ne 0) { throw 'Database provisioning failed' }
-          Write-Host 'Database ready'
+          & $client --protocol=TCP -h 127.0.0.1 -P 3307 -u infeara_app "-p$env:DB_PASSWORD" -e "SHOW DATABASES;" | Select-String 'infeara_sales'
+          Write-Host 'Database ready (utf8mb4, +00:00, least-privilege application user)'
 
       - name: Install Apache Tomcat 11
         shell: pwsh
@@ -510,12 +536,20 @@ jobs:
       - name: Write the external configuration (outside the WAR)
         shell: pwsh
         run: |
-          # This is the deployment model documented for Windows: credentials and tuning live
-          # in ProgramData, not in the artefact. Forward slashes only - a backslash is an
-          # escape character in .properties files.
-          $conf = Join-Path $env:INFEARA_DATA 'conf'
-          $logs = Join-Path $env:INFEARA_DATA 'logs'
+          # This is the deployment model documented for Windows: credentials and tuning live in
+          # ProgramData, not in the artefact. Forward slashes only - a backslash is an escape
+          # character in .properties files, so "C:\log" becomes "C:log" with no error at all.
+          $conf  = Join-Path $env:INFEARA_DATA 'conf'
+          $logs  = Join-Path $env:INFEARA_DATA 'logs'
           New-Item -ItemType Directory -Force -Path $conf, $logs | Out-Null
+          $confPosix = $conf.Replace('\', '/')
+          $logsPosix = $logs.Replace('\', '/')
+
+          # 32 random bytes, base64: exactly the AES-256-GCM key material the app expects.
+          $keyBytes = [byte[]]::new(32)
+          [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($keyBytes)
+          $encKey = [Convert]::ToBase64String($keyBytes)
+
           $props = @"
           spring.datasource.url=jdbc:mariadb://$($env:DB_HOST):$($env:DB_PORT)/$($env:DB_NAME)?useUnicode=true&characterEncoding=utf8
           spring.datasource.username=$($env:DB_USER)
@@ -523,7 +557,7 @@ jobs:
           spring.jpa.properties.hibernate.jdbc.batch_size=30
           spring.jpa.properties.hibernate.order_inserts=true
           spring.jpa.properties.hibernate.jdbc.time_zone=UTC
-          app.security.encryption-key=$([Convert]::ToBase64String((New-Object byte[] 32 | ForEach-Object { Get-Random -Maximum 256 })))
+          app.security.encryption-key=$encKey
           app.security.encryption-key-id=k1
           app.security.cookie-secure=auto
           app.base-url=http://localhost:8080
@@ -532,35 +566,47 @@ jobs:
           app.bootstrap.admin-password=$($env:BOOTSTRAP_ADMIN_PASSWORD)
           app.worker.enabled=true
           "@
-          # UTF-8 WITHOUT BOM: java.util.Properties does not strip a BOM, and PowerShell 5.1's
-          # -Encoding UTF8 writes one - the first key would silently become unusable.
-          $utf8 = New-Object System.Text.UTF8Encoding($false)
-          [System.IO.File]::WriteAllText((Join-Path $conf 'infeara.properties'), $props, $utf8)
           $lprops = @"
-          logging.file.name=$((Join-Path $logs 'sales-os.log') -replace '\\','/')
+          logging.file.name=$logsPosix/sales-os.log
           logging.logback.rollingpolicy.max-file-size=20MB
           logging.logback.rollingpolicy.max-history=7
           logging.level.com.infeara.sales=INFO
           "@
+
+          # UTF-8 WITHOUT BOM: java.util.Properties does not strip a BOM and PowerShell 5.1's
+          # -Encoding UTF8 writes one, which would silently rename the first key.
+          $utf8 = New-Object System.Text.UTF8Encoding($false)
+          [System.IO.File]::WriteAllText((Join-Path $conf 'infeara.properties'), $props, $utf8)
           [System.IO.File]::WriteAllText((Join-Path $conf 'logs.properties'), $lprops, $utf8)
+
+          Write-Host "configuration written to $confPosix"
           Get-Content (Join-Path $conf 'infeara.properties') |
             Where-Object { $_ -notmatch 'password|encryption-key=' }   # never print secrets
+
+          # Values the next step needs; GitHub job env does not persist between steps, so they
+          # are written to a small file the deployment step reads.
+          @{ conf = $confPosix; logs = $logsPosix } | ConvertTo-Json |
+            Set-Content -Path C:\infeara-conf.json -Encoding ASCII
 
       - name: Deploy ROOT.war and start Tomcat
         shell: pwsh
         run: |
+          $paths = Get-Content C:\infeara-conf.json -Raw | ConvertFrom-Json
           Copy-Item dist\ROOT.war "$env:CATALINA_HOME\webapps\ROOT.war" -Force
+
+          # CRLF is required: catalina.bat is parsed by cmd.exe. -Encoding ASCII keeps it plain.
           $setenv = @"
           @echo off
           set "JAVA_HOME=$env:JAVA_HOME"
           set "CATALINA_OPTS=-Xms512m -Xmx1536m -Dfile.encoding=UTF-8 -Duser.timezone=UTC"
           set "SPRING_PROFILES_ACTIVE=prod"
-          set "SPRING_CONFIG_ADDITIONAL_LOCATION=file:$((Join-Path $env:INFEARA_DATA 'conf\infeara.properties') -replace '\\','/'),file:$((Join-Path $env:INFEARA_DATA 'conf\logs.properties') -replace '\\','/')"
+          set "SPRING_CONFIG_ADDITIONAL_LOCATION=file:$($paths.conf)/infeara.properties,file:$($paths.logs)/logs.properties"
           "@
-          # CRLF is required: catalina.bat is parsed by cmd.exe.
           Set-Content -Path "$env:CATALINA_HOME\bin\setenv.bat" -Value $setenv -Encoding ASCII
+          Get-Content "$env:CATALINA_HOME\bin\setenv.bat"
+
           New-Item -ItemType Directory -Force -Path C:\tomcat-logs | Out-Null
-          # catalina.bat run blocks, so it is started detached and its output redirected.
+          # catalina.bat run blocks, so it is started detached with its output redirected.
           $process = Start-Process -FilePath "$env:CATALINA_HOME\bin\catalina.bat" -ArgumentList 'run' `
             -RedirectStandardOutput C:\tomcat-logs\console.log -RedirectStandardError C:\tomcat-logs\stderr.log `
             -PassThru -WindowStyle Hidden
@@ -629,9 +675,44 @@ jobs:
       - name: Deployed schema inventory
         shell: pwsh
         run: |
-          & mariadb --protocol=TCP -h 127.0.0.1 -u root -e "SELECT version, success FROM infeara_sales.flyway_schema_history ORDER BY installed_rank;"
-          & mariadb --protocol=TCP -h 127.0.0.1 -u root -e "SELECT COUNT(*) AS tables_total FROM information_schema.tables WHERE table_schema='infeara_sales';"
-          & mariadb --protocol=TCP -h 127.0.0.1 -u root -e "SELECT COUNT(*) AS users FROM infeara_sales.users;"
+          $client = 'C:\mariadb\bin\mariadb.exe'
+          & $client --protocol=TCP -h 127.0.0.1 -P 3307 -u root -e "SELECT version, success FROM infeara_sales.flyway_schema_history ORDER BY installed_rank;"
+          & $client --protocol=TCP -h 127.0.0.1 -P 3307 -u root -e "SELECT COUNT(*) AS tables_total FROM information_schema.tables WHERE table_schema='infeara_sales';"
+          & $client --protocol=TCP -h 127.0.0.1 -P 3307 -u root -e "SELECT COUNT(*) AS users FROM infeara_sales.users;"
+
+      - name: Collect Windows diagnostics
+        if: failure()
+        shell: pwsh
+        run: |
+          # The runner's raw logs are not always retrievable from this environment, so the
+          # failure detail is published where it can be read: the job summary and issue #1.
+          $report = @()
+          $report += "### Windows deployment diagnostics - run $env:GITHUB_RUN_ID ($env:GITHUB_SHA)"
+          $report += ''
+          foreach ($pair in @(
+              @{ Title = 'mariadb-server.err'; Path = 'C:\mariadb-server.err' },
+              @{ Title = 'mariadb-server.out'; Path = 'C:\mariadb-server.out' },
+              @{ Title = 'tomcat console.log'; Path = 'C:\tomcat-logs\console.log' },
+              @{ Title = 'tomcat stderr.log'; Path = 'C:\tomcat-logs\stderr.log' },
+              @{ Title = 'application log'; Path = (Join-Path $env:INFEARA_DATA 'logs\sales-os.log') })) {
+            if (Test-Path $pair.Path) {
+              $report += "#### $($pair.Title)"
+              $report += '```'
+              $report += (Get-Content $pair.Path -Tail 60 -ErrorAction SilentlyContinue) -join "`n"
+              $report += '```'
+            }
+          }
+          $report += '#### environment'
+          $report += '```'
+          $report += "DB_PORT=$env:DB_PORT JAVA_HOME=$env:JAVA_HOME"
+          $report += '```'
+          $text = $report -join "`n"
+          $text | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding UTF8
+          $file = 'C:\windows-report.md'
+          [System.IO.File]::WriteAllText($file, $text, (New-Object System.Text.UTF8Encoding($false)))
+          gh api "repos/${{ github.repository }}/issues/1/comments" -F "body=@C:\windows-report.md" | Out-Null
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Publish the Windows report
         if: always()
@@ -640,12 +721,21 @@ jobs:
           $summary = @()
           $summary += '### Windows deployment (windows-2022)'
           $summary += ''
-          $summary += "- Tomcat: $((& "$env:CATALINA_HOME\bin\version.bat" | Select-String 'Server version') -join ' ')"
-          $summary += "- Health: $(try { (Invoke-WebRequest 'http://localhost:8080/actuator/health' -UseBasicParsing -TimeoutSec 5).Content } catch { 'unreachable' })"
-          $summary += "- UI /: $(try { (Invoke-WebRequest 'http://localhost:8080/' -UseBasicParsing -TimeoutSec 10).StatusCode } catch { 'error' })"
+          try {
+            $version = (& "$env:CATALINA_HOME\bin\version.bat" 2>&1 | Select-String 'Server version' | Select-Object -First 1)
+            $summary += "- Tomcat: $version"
+          } catch { $summary += '- Tomcat: version unknown' }
+          try {
+            $health = (Invoke-WebRequest 'http://localhost:8080/actuator/health' -UseBasicParsing -TimeoutSec 5).Content
+            $summary += "- Health: ``$health``"
+          } catch { $summary += '- Health: unreachable' }
+          try {
+            $uiCode = (Invoke-WebRequest 'http://localhost:8080/' -UseBasicParsing -TimeoutSec 10).StatusCode
+            $summary += "- UI /: $uiCode"
+          } catch { $summary += '- UI /: error' }
           $summary += ''
           $summary += '```'
-          $summary += (Get-Content C:\tomcat-logs\console.log -Tail 40 -ErrorAction SilentlyContinue) -join "`n"
+          $summary += ((Get-Content 'C:\tomcat-logs\console.log' -Tail 30 -ErrorAction SilentlyContinue) -join "`n")
           $summary += '```'
           $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding UTF8
 
@@ -660,12 +750,22 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Stop Tomcat
+      - name: Stop Tomcat and MariaDB
         if: always()
         shell: pwsh
         run: |
-          if (Test-Path C:\tomcat-logs\tomcat.pid) {
-            $pidValue = Get-Content C:\tomcat-logs\tomcat.pid
-            Get-Process -Id $pidValue -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          # Cleanup failures must never mask the real result of the job.
+          try {
+            if (Test-Path C:\tomcat-logs\tomcat.pid) {
+              $tomcatPid = (Get-Content C:\tomcat-logs\tomcat.pid | Select-Object -First 1).Trim()
+              Get-Process -Id $tomcatPid -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            }
+            Get-Process java -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            if (Test-Path C:\mariadb.pid) {
+              $mariaPid = (Get-Content C:\mariadb.pid | Select-Object -First 1).Trim()
+              Get-Process -Id $mariaPid -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            }
+          } catch {
+            Write-Host "cleanup: $($_.Exception.Message)"
           }
-          & "$env:CATALINA_HOME\bin\shutdown.bat" 2>$null | Out-Null
+          exit 0
