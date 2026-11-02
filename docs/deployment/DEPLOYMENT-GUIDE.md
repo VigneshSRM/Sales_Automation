@@ -5,13 +5,30 @@ entry point; the deep dives are linked.
 
 ## 1. Prerequisites
 
-| Component | Version | Notes |
-|---|---|---|
-| JDK | 17 (LTS) | Required by Spring Framework 7 and Tomcat 11 |
-| Apache Tomcat | 11.0.x | Servlet 6.1; the WAR is descriptor-free |
-| MariaDB | 11.4 LTS | InnoDB, `utf8mb4_unicode_ci`, `time_zone='+00:00'` |
-| Node.js | 22 LTS | Build-time only (frontend export) |
-| Maven | 3.9+ | Build-time only |
+**Only Java and Tomcat are installed on a server.** Everything else the application needs is a jar
+inside the WAR (`WEB-INF/lib` — 101 runtime jars, verified on every build); Tomcat contributes only
+the servlet container (`WEB-INF/lib-provided` — 4 jars, `provided` scope).
+
+| Component | Version | Needed | Notes |
+|---|---|---|---|
+| JDK | 17 (LTS) | **Host, runtime** | Required by Spring Framework 7 and Tomcat 11 |
+| Apache Tomcat | 11.0.x | **Host, runtime** | Servlet 6.1; the WAR is descriptor-free |
+| MariaDB | 11.4 LTS | **Host, external service** | InnoDB, `utf8mb4_unicode_ci`, `time_zone='+00:00'` |
+| Node.js | 22 LTS | Build machine only | Frontend static export |
+| Maven | 3.9+ | Build machine only | Produces the WAR |
+| Application libraries | managed by `pom.xml` | **Inside the WAR** | Spring, Hibernate, HikariCP, MariaDB JDBC, Flyway, Jackson, springdoc, mail, BouncyCastle, Logback |
+
+### Dependency placement
+
+| Location | Rule |
+|---|---|
+| `WEB-INF/lib` (inside the WAR) | The only supported home for an application library — versioned, portable, verified |
+| `WEB-INF/lib-provided` | Only what Tomcat supplies; must match the container |
+| `$CATALINA_HOME/lib` | **Not** for application jars — invisible to the WAR, absent from git, untested by the packaging gate |
+
+Need another library? Add it to `backend/pom.xml`, run `./scripts/build-war.sh` (24 packaging
+assertions) and redeploy the single WAR. Never install an application dependency into Tomcat.
+Full procedure: `docs/operations/installation-setup.md` §0.
 
 ## 2. Build
 
