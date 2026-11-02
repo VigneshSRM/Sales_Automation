@@ -1,0 +1,35 @@
+@echo off
+rem ---------------------------------------------------------------------------
+rem Template for Tomcat's bin\setenv.bat on Windows.
+rem
+rem Rendered by scripts\windows\host-app.ps1, which fills in this deployment's paths and
+rem secrets and writes the result with a restricted ACL. Kept in the repository as the
+rem documented, reviewable list of the runtime switches.
+rem
+rem READ THIS FIRST - the Windows service does NOT run this file. Procrun starts the
+rem bootstrap directly instead of catalina.bat, so setenv.bat only applies to interactive
+rem runs (startup.bat / catalina.bat run). host-app.ps1 therefore writes the same values
+rem into the service definition:
+rem     service.bat update InfearaSalesOS --JvmOptions "-Xms512m;...;-Dspring.profiles.active=prod;..."
+rem and into the service environment. If you change a value here, change it there too -
+rem or you will debug a service that ignores the file you just edited.
+rem ---------------------------------------------------------------------------
+
+rem Absolute JDK - never rely on PATH for a service account.
+set "JAVA_HOME=C:\Program Files\Infeara\jdk-17"
+
+rem -Dfile.encoding=UTF-8 is mandatory: the default Windows code page mangles non-ASCII
+rem names and subject lines. -Duser.timezone=UTC keeps logs and the audit chain consistent
+rem with the database, which stores DATETIME(6) in UTC.
+set "CATALINA_OPTS=-Xms512m -Xmx1536m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError -Dfile.encoding=UTF-8 -Duser.timezone=UTC"
+
+rem Production profile: Flyway owns the schema, forward headers parsed, access log on.
+set "SPRING_PROFILES_ACTIVE=prod"
+
+rem Deployment configuration OUTSIDE the WAR: datasource, Hibernate properties, encryption
+rem key, AI keys, bootstrap administrator, logging. Forward slashes - a backslash is an
+rem escape character in .properties files and silently eats the path.
+set "SPRING_CONFIG_ADDITIONAL_LOCATION=file:C:/ProgramData/Infeara/conf/infeara.properties,file:C:/ProgramData/Infeara/conf/logs.properties"
+
+rem Optional: full Logback control (time + size rotation, separate error file).
+rem set "JAVA_OPTS=%JAVA_OPTS% -Dlogging.config=file:C:/ProgramData/Infeara/conf/logback-spring.xml"

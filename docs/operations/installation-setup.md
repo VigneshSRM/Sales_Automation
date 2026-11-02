@@ -624,13 +624,33 @@ Mailpit UI: http://localhost:8025 (SMTP on 1025 with any credentials).
 Tests: `cd frontend && npx tsc --noEmit && npx vitest run` (28),
 `cd backend && mvn test` (26), `./scripts/build-war.sh --with-tests` for the Testcontainers ITs.
 
-## Appendix B — macOS / Windows developers
+## Appendix B — macOS and Windows
 
-The WAR deployment is Linux-only in this documentation because that is what was verified. For local
-development on macOS: install Temurin 17 (`brew install --cask temurin@17`), Maven
-(`brew install maven`), Node 22 and Docker Desktop, then follow Appendix A. There is no verified
-Tomcat-on-Windows run; if you need one, treat it as unverified and record the result in
-`docs/operations/`.
+**Windows is a supported deployment platform.** It has its own guides because the process model and
+the configuration mechanics differ from Linux:
+
+| Guide | Covers |
+| --- | --- |
+| `windows-deployment.md` | Windows Server 2019/2022: PowerShell toolchain, Tomcat as a Windows service (Procrun), external configuration in `ProgramData`, IIS + ARR for TLS, upgrade, rollback, troubleshooting |
+| `windows-development.md` | Windows 10/11 developer setup: winget, Docker Desktop, `spring-boot:run`, `npm run dev`, local Tomcat |
+| `windows-containers.md` | Building a Windows container image (approved deviation, documented but not CI-verified) |
+
+Windows-specific differences worth knowing before you open those guides:
+
+* `bin\setenv.bat` exists but the **service does not read it** — Procrun starts the bootstrap
+  directly, so the environment must live in the service definition.
+* `icacls` replaces `chmod`; the configuration directory needs `/inheritance:r`.
+* Paths inside `.properties` files must use forward slashes.
+* MariaDB's `default-time-zone` must be an offset (`+00:00`) on Windows.
+* Tomcat keeps extracted jars locked, so a WAR cannot be replaced while the service runs.
+
+The Windows path is verified by the `build-and-host-windows` job in
+`.github/workflows/build-and-host-war.yml` (a `windows-2022` runner that installs the toolchain,
+builds the WAR, deploys it and runs the same smoke suites).
+
+For local development on **macOS**: install Temurin 17 (`brew install --cask temurin@17`), Maven
+(`brew install maven`), Node 22 and Docker Desktop, then follow Appendix A. macOS is a development
+platform here, not a documented deployment target.
 
 ## Appendix C — no toolchain available? (CI / preview)
 

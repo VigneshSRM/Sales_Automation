@@ -339,3 +339,333 @@ jobs:
       - name: Stop Tomcat
         if: always()
         run: /opt/tomcat/bin/shutdown.sh 10 -force || true
+
+  # ---------------------------------------------------------------------------
+  # Windows: the same WAR, the same container version, a different host OS.
+  #
+  # Why this job exists: docs/operations/windows-deployment.md is only useful if it is
+  # true. This runs the Windows procedure on a real windows-2022 host - install the
+  # toolchain, build the WAR, provision MariaDB, deploy ROOT.war into Tomcat 11, load the
+  # external configuration from ProgramData, and exercise the API - so the Windows guide
+  # carries evidence instead of assertions.
+  #
+  # Differences from the Linux job, on purpose:
+  #   * Tomcat is started with catalina.bat run (not a registered service): a GitHub runner
+  #     has no interactive session for the Procrun service to attach a console to. The
+  #     service path is documented and exercised by scripts/windows/host-app.ps1.
+  #   * MariaDB is installed from Chocolatey instead of a service container, because
+  #     Windows runners cannot run Linux container services.
+  # ---------------------------------------------------------------------------
+  build-and-host-windows:
+    name: Build WAR, deploy to Tomcat 11 on Windows, smoke test
+    runs-on: windows-2022
+    timeout-minutes: 60
+
+    env:
+      TOMCAT_VERSION: "11.0.27"
+      DB_HOST: 127.0.0.1
+      DB_PORT: "3306"
+      DB_NAME: infeara_sales
+      DB_USER: infeara_app
+      DB_PASSWORD: ci_app_password_windows
+      BOOTSTRAP_ADMIN_EMAIL: ci-admin@infeara.local
+      BOOTSTRAP_ADMIN_PASSWORD: CiOnly-Passw0rd!2026
+      INFEARA_DATA: C:\ProgramData\Infeara
+      CATALINA_HOME: C:\tomcat
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Toolchain versions
+        shell: pwsh
+        run: |
+          java -version
+          javac -version
+          mvn -v
+          node -v
+          python --version
+          [Environment]::OSVersion.VersionString
+          Write-Host "JAVA_HOME=$env:JAVA_HOME"
+
+      - name: Prove the Windows deployment scripts parse
+        shell: pwsh
+        run: |
+          # A syntax error in a .ps1 is the most likely first failure on a new platform,
+          # so it is checked explicitly rather than discovered mid-deployment.
+          $failed = 0
+          Get-ChildItem scripts\windows\*.ps1 | ForEach-Object {
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              $failed++
+              Write-Host "::error file=$($_.FullName)::$($errors[0].Message) (line $($errors[0].Extent.StartLineNumber))"
+              $errors | ForEach-Object { Write-Host "  $($_.Extent.StartLineNumber): $($_.Message)" }
+            } else {
+              Write-Host "OK  $($_.Name)"
+            }
+          }
+          if ($failed -gt 0) { exit 1 }
+
+      - name: Frontend type-check, unit tests and static export
+        shell: pwsh
+        working-directory: frontend
+        run: |
+          npm ci --no-audit --no-fund
+          npx tsc --noEmit
+          npx vitest run
+          npm run build
+
+      - name: Build the WAR
+        shell: pwsh
+        working-directory: backend
+        run: mvn -B -DskipTests clean package
+
+      - name: Backend unit and architecture tests
+        shell: pwsh
+        working-directory: backend
+        run: mvn -B test
+
+      - name: Verify the packaging contract
+        shell: pwsh
+        run: |
+          $war = 'backend\target\infeara-sales-os.war'
+          if (-not (Test-Path $war)) { throw "WAR not found: $war" }
+          python scripts\verify-war.py $war
+          if ($LASTEXITCODE -ne 0) { throw 'Packaging contract failed' }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $war dist\infeara-sales-os.war -Force
+          Copy-Item $war dist\ROOT.war -Force
+
+      - name: Install and configure MariaDB 11.4
+        shell: pwsh
+        run: |
+          choco install mariadb --version=11.4.5 -y --no-progress
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Pinned version unavailable; installing the latest 11.x"
+            choco install mariadb -y --no-progress
+          }
+          $mariadb = Get-Command mariadb -ErrorAction SilentlyContinue
+          if (-not $mariadb) {
+            $fallback = Get-ChildItem 'C:\tools\mariadb*\bin\mariadb.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($fallback) { $env:Path = "$($fallback.Directory.FullName);$env:Path" } else { throw 'mariadb client not found after install' }
+          }
+          if (-not (Get-Service MariaDB -ErrorAction SilentlyContinue)) {
+            Write-Host "Service missing; looking for another service name"
+            Get-Service | Where-Object { $_.Name -match 'maria|mysql' } | Format-Table -AutoSize
+          } else {
+            Set-Service MariaDB -StartupType Automatic
+            Start-Service MariaDB -ErrorAction SilentlyContinue
+          }
+          # Wait for the server socket to accept connections.
+          for ($i = 0; $i -lt 30; $i++) {
+            & mariadb --protocol=TCP -h 127.0.0.1 -u root -e "SELECT 1" 2>$null
+            if ($LASTEXITCODE -eq 0) { Write-Host "MariaDB is up after $i attempt(s)"; break }
+            Start-Sleep -Seconds 2
+          }
+          & mariadb --protocol=TCP -h 127.0.0.1 -u root -e "SELECT VERSION(), @@character_set_server, @@collation_server, @@time_zone;"
+          & mariadb --protocol=TCP -h 127.0.0.1 -u root -e @"
+          CREATE DATABASE IF NOT EXISTS infeara_sales CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+          CREATE USER IF NOT EXISTS 'infeara_app'@'localhost' IDENTIFIED BY '$env:DB_PASSWORD';
+          CREATE USER IF NOT EXISTS 'infeara_app'@'%' IDENTIFIED BY '$env:DB_PASSWORD';
+          GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON infeara_sales.* TO 'infeara_app'@'localhost';
+          GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON infeara_sales.* TO 'infeara_app'@'%';
+          FLUSH PRIVILEGES;
+          "@
+          if ($LASTEXITCODE -ne 0) { throw 'Database provisioning failed' }
+          Write-Host 'Database ready'
+
+      - name: Install Apache Tomcat 11
+        shell: pwsh
+        run: |
+          $url = "https://archive.apache.org/dist/tomcat/tomcat-11/v$env:TOMCAT_VERSION/bin/apache-tomcat-$env:TOMCAT_VERSION-windows-x64.zip"
+          Invoke-WebRequest -Uri $url -OutFile C:\tomcat.zip -UseBasicParsing
+          Expand-Archive C:\tomcat.zip -DestinationPath C:\tomcat-extract -Force
+          $inner = Get-ChildItem C:\tomcat-extract -Directory | Select-Object -First 1
+          Move-Item $inner.FullName C:\tomcat
+          foreach ($w in @('manager','host-manager','docs','examples','ROOT')) {
+            $p = Join-Path $env:CATALINA_HOME "webapps\$w"
+            if (Test-Path $p) { Remove-Item -Recurse -Force $p }
+          }
+          & "$env:CATALINA_HOME\bin\version.bat" | Select-String 'Server version|JVM Version'
+
+      - name: Write the external configuration (outside the WAR)
+        shell: pwsh
+        run: |
+          # This is the deployment model documented for Windows: credentials and tuning live
+          # in ProgramData, not in the artefact. Forward slashes only - a backslash is an
+          # escape character in .properties files.
+          $conf = Join-Path $env:INFEARA_DATA 'conf'
+          $logs = Join-Path $env:INFEARA_DATA 'logs'
+          New-Item -ItemType Directory -Force -Path $conf, $logs | Out-Null
+          $props = @"
+          spring.datasource.url=jdbc:mariadb://$($env:DB_HOST):$($env:DB_PORT)/$($env:DB_NAME)?useUnicode=true&characterEncoding=utf8
+          spring.datasource.username=$($env:DB_USER)
+          spring.datasource.password=$($env:DB_PASSWORD)
+          spring.jpa.properties.hibernate.jdbc.batch_size=30
+          spring.jpa.properties.hibernate.order_inserts=true
+          spring.jpa.properties.hibernate.jdbc.time_zone=UTC
+          app.security.encryption-key=$([Convert]::ToBase64String((New-Object byte[] 32 | ForEach-Object { Get-Random -Maximum 256 })))
+          app.security.encryption-key-id=k1
+          app.security.cookie-secure=auto
+          app.base-url=http://localhost:8080
+          app.environment=production
+          app.bootstrap.admin-email=$($env:BOOTSTRAP_ADMIN_EMAIL)
+          app.bootstrap.admin-password=$($env:BOOTSTRAP_ADMIN_PASSWORD)
+          app.worker.enabled=true
+          "@
+          # UTF-8 WITHOUT BOM: java.util.Properties does not strip a BOM, and PowerShell 5.1's
+          # -Encoding UTF8 writes one - the first key would silently become unusable.
+          $utf8 = New-Object System.Text.UTF8Encoding($false)
+          [System.IO.File]::WriteAllText((Join-Path $conf 'infeara.properties'), $props, $utf8)
+          $lprops = @"
+          logging.file.name=$((Join-Path $logs 'sales-os.log') -replace '\\','/')
+          logging.logback.rollingpolicy.max-file-size=20MB
+          logging.logback.rollingpolicy.max-history=7
+          logging.level.com.infeara.sales=INFO
+          "@
+          [System.IO.File]::WriteAllText((Join-Path $conf 'logs.properties'), $lprops, $utf8)
+          Get-Content (Join-Path $conf 'infeara.properties') |
+            Where-Object { $_ -notmatch 'password|encryption-key=' }   # never print secrets
+
+      - name: Deploy ROOT.war and start Tomcat
+        shell: pwsh
+        run: |
+          Copy-Item dist\ROOT.war "$env:CATALINA_HOME\webapps\ROOT.war" -Force
+          $setenv = @"
+          @echo off
+          set "JAVA_HOME=$env:JAVA_HOME"
+          set "CATALINA_OPTS=-Xms512m -Xmx1536m -Dfile.encoding=UTF-8 -Duser.timezone=UTC"
+          set "SPRING_PROFILES_ACTIVE=prod"
+          set "SPRING_CONFIG_ADDITIONAL_LOCATION=file:$((Join-Path $env:INFEARA_DATA 'conf\infeara.properties') -replace '\\','/'),file:$((Join-Path $env:INFEARA_DATA 'conf\logs.properties') -replace '\\','/')"
+          "@
+          # CRLF is required: catalina.bat is parsed by cmd.exe.
+          Set-Content -Path "$env:CATALINA_HOME\bin\setenv.bat" -Value $setenv -Encoding ASCII
+          New-Item -ItemType Directory -Force -Path C:\tomcat-logs | Out-Null
+          # catalina.bat run blocks, so it is started detached and its output redirected.
+          $process = Start-Process -FilePath "$env:CATALINA_HOME\bin\catalina.bat" -ArgumentList 'run' `
+            -RedirectStandardOutput C:\tomcat-logs\console.log -RedirectStandardError C:\tomcat-logs\stderr.log `
+            -PassThru -WindowStyle Hidden
+          Write-Host "Tomcat PID $($process.Id)"
+          $process.Id | Out-File C:\tomcat-logs\tomcat.pid -Encoding ASCII
+
+      - name: Wait for /actuator/health
+        shell: pwsh
+        run: |
+          $healthy = $false
+          for ($i = 0; $i -lt 120; $i++) {
+            try {
+              $r = Invoke-WebRequest 'http://localhost:8080/actuator/health' -UseBasicParsing -TimeoutSec 5
+              if ($r.Content -match '"status":"UP"') { Write-Host "HEALTH UP after $i s"; Write-Host $r.Content; $healthy = $true; break }
+            } catch {
+              if ($i % 15 -eq 0 -and $i -gt 0) { Write-Host "still waiting ($i s): $($_.Exception.Message)" }
+            }
+            Start-Sleep -Seconds 1
+          }
+          if (-not $healthy) {
+            Write-Host '---- console.log tail ----'
+            Get-Content C:\tomcat-logs\console.log -Tail 120 -ErrorAction SilentlyContinue
+            Write-Host '---- stderr.log tail ----'
+            Get-Content C:\tomcat-logs\stderr.log -Tail 60 -ErrorAction SilentlyContinue
+            Write-Host '---- application log tail ----'
+            Get-Content (Join-Path $env:INFEARA_DATA 'logs\sales-os.log') -Tail 120 -ErrorAction SilentlyContinue
+            throw 'Application did not become healthy'
+          }
+
+      - name: Smoke test the deployed WAR (UI + API + OpenAPI)
+        shell: pwsh
+        run: |
+          function Get-Code([string]$Url) {
+            try { return (Invoke-WebRequest $Url -UseBasicParsing -TimeoutSec 15).StatusCode }
+            catch { return $_.Exception.Response.StatusCode.value__ }
+          }
+          $results = @()
+          foreach ($path in @('/', '/leads/', '/engagement/mailbox/', '/login/', '/v3/api-docs')) {
+            $code = Get-Code "http://localhost:8080$path"
+            $results += [pscustomobject]@{ Path = $path; Expected = 200; Actual = $code; Pass = ($code -eq 200) }
+          }
+          $meCode = Get-Code 'http://localhost:8080/api/v1/auth/me'
+          $results += [pscustomobject]@{ Path = '/api/v1/auth/me'; Expected = 401; Actual = $meCode; Pass = ($meCode -eq 401) }
+          $results | Format-Table -AutoSize
+          $results | ForEach-Object { if ($_.Pass) { Write-Host "[PASS] $($_.Path) -> $($_.Actual)" } else { Write-Host "::error::$($_.Path) expected $($_.Expected), got $($_.Actual)" } }
+          if ($results.Where({ -not $_.Pass }).Count -gt 0) { exit 1 }
+          # The 401 must be the API's own error envelope, not an IIS/Tomcat error page.
+          try { Invoke-WebRequest 'http://localhost:8080/api/v1/auth/me' -UseBasicParsing | Out-Null }
+          catch {
+            $body = (New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())).ReadToEnd()
+            Write-Host "401 body: $body"
+            if ($body -notmatch '"success":false' -or $body -notmatch 'UNAUTHENTICATED') { throw 'Unexpected 401 body' }
+          }
+          $openapi = (Invoke-WebRequest 'http://localhost:8080/v3/api-docs' -UseBasicParsing).Content
+          $pathCount = ([regex]::Matches($openapi, '"\/api\/')).Count
+          Write-Host "OpenAPI paths detected: $pathCount"
+          if ($pathCount -lt 90) { throw "Unexpected OpenAPI path count: $pathCount" }
+
+      - name: Authenticated smoke test on Windows
+        shell: pwsh
+        run: |
+          python scripts\smoke-authenticated.py --base-url http://localhost:8080 `
+            --email "$env:BOOTSTRAP_ADMIN_EMAIL" --password "$env:BOOTSTRAP_ADMIN_PASSWORD"
+          if ($LASTEXITCODE -ne 0) { throw 'Authenticated smoke test failed' }
+
+      - name: Deployed schema inventory
+        shell: pwsh
+        run: |
+          & mariadb --protocol=TCP -h 127.0.0.1 -u root -e "SELECT version, success FROM infeara_sales.flyway_schema_history ORDER BY installed_rank;"
+          & mariadb --protocol=TCP -h 127.0.0.1 -u root -e "SELECT COUNT(*) AS tables_total FROM information_schema.tables WHERE table_schema='infeara_sales';"
+          & mariadb --protocol=TCP -h 127.0.0.1 -u root -e "SELECT COUNT(*) AS users FROM infeara_sales.users;"
+
+      - name: Publish the Windows report
+        if: always()
+        shell: pwsh
+        run: |
+          $summary = @()
+          $summary += '### Windows deployment (windows-2022)'
+          $summary += ''
+          $summary += "- Tomcat: $((& "$env:CATALINA_HOME\bin\version.bat" | Select-String 'Server version') -join ' ')"
+          $summary += "- Health: $(try { (Invoke-WebRequest 'http://localhost:8080/actuator/health' -UseBasicParsing -TimeoutSec 5).Content } catch { 'unreachable' })"
+          $summary += "- UI /: $(try { (Invoke-WebRequest 'http://localhost:8080/' -UseBasicParsing -TimeoutSec 10).StatusCode } catch { 'error' })"
+          $summary += ''
+          $summary += '```'
+          $summary += (Get-Content C:\tomcat-logs\console.log -Tail 40 -ErrorAction SilentlyContinue) -join "`n"
+          $summary += '```'
+          $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding UTF8
+
+      - name: Upload Windows logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-deployment-logs
+          path: |
+            C:\tomcat-logs\*.log
+            C:\ProgramData\Infeara\logs\*.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Stop Tomcat
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path C:\tomcat-logs\tomcat.pid) {
+            $pidValue = Get-Content C:\tomcat-logs\tomcat.pid
+            Get-Process -Id $pidValue -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          }
+          & "$env:CATALINA_HOME\bin\shutdown.bat" 2>$null | Out-Null

@@ -1,0 +1,59 @@
+# Line-ending policy for a repository that is deployed from both Linux and Windows.
+#
+# Why this file exists: bash scripts checked out with CRLF fail with
+# "$'\r': command not found", and PowerShell scripts checked out with LF can fail inside
+# here-strings and splatting on older Windows PowerShell hosts. Neither failure mentions
+# line endings, so both cost an afternoon. Declare the rule once, here.
+#
+# Default: normalise to LF in the repository; let git convert on checkout per platform.
+* text=auto eol=lf
+
+# --- POSIX shell: must be LF on every platform (they are executed by bash/sh) ---------
+*.sh            text eol=lf
+*.bash          text eol=lf
+*.service       text eol=lf
+
+# --- Windows: PowerShell and batch are executed by Windows hosts, keep CRLF -----------
+*.ps1           text eol=crlf
+*.psm1          text eol=crlf
+*.psd1          text eol=crlf
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+
+# --- Configuration that is parsed by the JVM or by MariaDB ---------------------------
+# A BOM or CRLF in a .properties file is ignored by Spring, but CRLF in my.ini can break
+# MariaDB option parsing on Windows, so these stay LF.
+*.properties    text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.xml           text eol=lf
+*.sql           text eol=lf
+*.ini           text eol=lf
+
+# --- Documentation and source: LF is fine everywhere ---------------------------------
+*.md            text eol=lf
+*.java          text eol=lf
+*.ts            text eol=lf
+*.tsx           text eol=lf
+*.js            text eol=lf
+*.mjs           text eol=lf
+*.json          text eol=lf
+*.css           text eol=lf
+*.py            text eol=lf
+
+# --- Binary: never touched ----------------------------------------------------------
+*.war           binary
+*.jar           binary
+*.zip           binary
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.ico           binary
+*.woff          binary
+*.woff2         binary
+*.ttf           binary
+*.pdf           binary
+
+# --- Keep GitHub linguist noise down ------------------------------------------------
+backend/src/main/resources/static/**  linguist-generated=true

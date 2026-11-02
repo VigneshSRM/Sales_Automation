@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Optional Logback configuration for Infeara Sales OS on Windows.
+
+  Use this instead of the properties-only setup when you need rotation that properties
+  cannot express: time AND size based rolling, a separate error file, or an async appender.
+
+  Install it:
+    1. change LOG_DIR below (use forward slashes or escaped backslashes)
+    2. copy this file to   C:\ProgramData\Infeara\conf\logback-spring.xml
+    3. add to bin\setenv.bat AND to the service JVM options:
+           -Dlogging.config=file:C:/ProgramData/Infeara/conf/logback-spring.xml
+    4. restart the service
+
+  Rotation semantics:
+    * %d{yyyy-MM-dd} + %i  -> one file per day, additional files when the day exceeds 50MB
+    * maxHistory=30        -> keep 30 days
+    * totalSizeCap=2GB     -> hard ceiling across all files (oldest deleted first)
+  Logging must never take the application down, so writes are async and discarding is
+  allowed under sustained pressure rather than blocking a request thread.
+-->
+<configuration scan="false">
+
+    <springProperty scope="context" name="appName" source="spring.application.name" defaultValue="infeara-sales-os"/>
+
+    <!-- Change this per deployment. Windows paths need forward slashes here too. -->
+    <property name="LOG_DIR" value="C:/ProgramData/Infeara/logs"/>
+    <property name="LOG_FILE" value="${LOG_DIR}/sales-os.log"/>
+
+    <!-- Correlation ids are populated by CorrelationIdFilter; never log bodies or headers. -->
+    <property name="CONSOLE_PATTERN"
+              value="%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%X{requestId:-}] [%X{workspaceId:-}] %logger{36} - %msg%n"/>
+    <property name="FILE_PATTERN"
+              value="%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%thread] [%X{requestId:-}] [%X{workspaceId:-}] %logger{36} - %msg%n"/>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>${CONSOLE_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_FILE}</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/sales-os.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>50MB</maxFileSize>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>2GB</totalSizeCap>
+            <cleanHistoryOnStart>false</cleanHistoryOnStart>
+        </rollingPolicy>
+        <encoder>
+            <pattern>${FILE_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/sales-os-error.log</file>
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>ERROR</level>
+        </filter>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/sales-os-error.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>25MB</maxFileSize>
+            <maxHistory>60</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>${FILE_PATTERN}</pattern>
+            <charset>UTF-8</charset>
+        </encoder>
+    </appender>
+
+    <!-- Async wrappers: a slow disk must not stall an HTTP request thread. -->
+    <appender name="ASYNC_FILE" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>2048</queueSize>
+        <discardingThreshold>0</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="FILE"/>
+    </appender>
+
+    <appender name="ASYNC_ERROR" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>1024</queueSize>
+        <neverBlock>true</neverBlock>
+        <appender-ref ref="ERROR_FILE"/>
+    </appender>
+
+    <!-- Noisy infrastructure libraries stay quiet; application logs stay useful. -->
+    <logger name="org.hibernate.SQL" level="WARN"/>
+    <logger name="org.hibernate.orm.jdbc.bind" level="WARN"/>
+    <logger name="org.springframework.web" level="INFO"/>
+    <logger name="com.zaxxer.hikari" level="INFO"/>
+    <logger name="com.infeara.sales" level="INFO"/>
+
+    <root level="WARN">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="ASYNC_FILE"/>
+        <appender-ref ref="ASYNC_ERROR"/>
+    </root>
+</configuration>

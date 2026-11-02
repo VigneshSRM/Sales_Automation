@@ -1,7 +1,13 @@
 # Deployment guide
 
-Production target: **WAR on Apache Tomcat 11** with **MariaDB 11.4**. This page is the operational
-entry point; the deep dives are linked.
+Production target: **WAR on Apache Tomcat 11** with **MariaDB 11.4**, on Linux or Windows. This page
+is the operational entry point; the deep dives are linked.
+
+| Platform | Step-by-step guide | Automation |
+| --- | --- | --- |
+| Linux (Debian/Ubuntu, RHEL/Rocky/Alma) | `docs/operations/installation-setup.md` | `scripts/*.sh` |
+| **Windows Server 2019/2022** | **`docs/operations/windows-deployment.md`** | **`scripts/windows/*.ps1`** |
+| Windows containers | `docs/operations/windows-containers.md` | `deploy/windows/Dockerfile` (unverified) |
 
 ## 1. Prerequisites
 
