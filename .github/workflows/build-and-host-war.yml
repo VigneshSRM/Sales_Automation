@@ -459,65 +459,95 @@ jobs:
         shell: pwsh
         run: |
           # Deterministic by design: the runner image ships a MySQL server that already owns
-          # port 3306, and a Chocolatey MariaDB would fight it for the port and the service
-          # name. A portable ZIP on its own port and datadir cannot collide with anything.
+          # port 3306 and the "MySQL" service name, so an installed MariaDB would fight it.
+          # A portable ZIP on its own port and data directory cannot collide with anything.
+          #
+          # Every command appends to C:\ci-diag.log, which the diagnostics step publishes -
+          # the runner's log archive is not always reachable, so failures must be readable.
           $ErrorActionPreference = 'Stop'
-          $url = 'https://archive.mariadb.org/mariadb-11.4.5/winx64-packages/mariadb-11.4.5-winx64.zip'
-          Invoke-WebRequest -Uri $url -OutFile C:\mariadb.zip -UseBasicParsing
-          Expand-Archive C:\mariadb.zip -DestinationPath C:\mariadb-extract -Force
-          $inner = Get-ChildItem C:\mariadb-extract -Directory | Select-Object -First 1
-          Move-Item $inner.FullName C:\mariadb
-          Remove-Item -Recurse -Force C:\mariadb.zip, C:\mariadb-extract
-          Write-Host "MariaDB unpacked to C:\mariadb"
-          & C:\mariadb\bin\mariadbd.exe --version
+          $diag = 'C:\ci-diag.log'
+          Set-Content -Path $diag -Value "MariaDB provisioning $(Get-Date -Format o)" -Encoding ASCII
+          function Step([string]$message) {
+            $line = "[maria] $message"
+            Write-Host $line
+            Add-Content -Path $diag -Value $line -Encoding ASCII
+          }
 
-          # Initialise a fresh data directory. No root password in CI: the instance is
-          # ephemeral and listens on localhost only.
-          & C:\mariadb\bin\mariadb-install-db.exe --datadir=C:\mariadb-data `
-              --password= --auth-root-authentication-method=normal `
-              --default-time-zone=+00:00 2>&1 | Select-Object -Last 5
+          $zip = 'C:\mariadb.zip'
+          $url = 'https://archive.mariadb.org/mariadb-11.4.5/winx64-packages/mariadb-11.4.5-winx64.zip'
+          Step "downloading $url"
+          try {
+            Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing -MaximumRedirection 5
+            Step "downloaded $([math]::Round((Get-Item $zip).Length / 1MB, 1)) MB"
+          } catch {
+            Step "download failed: $($_.Exception.Message)"
+            throw
+          }
+
+          Expand-Archive -Path $zip -DestinationPath C:\mariadb-extract -Force
+          $inner = Get-ChildItem C:\mariadb-extract -Directory | Select-Object -First 1
+          if (-not $inner) { throw 'The MariaDB archive contained no directory' }
+          Move-Item $inner.FullName C:\mariadb
+          Step "unpacked to C:\mariadb ($($inner.Name))"
+
+          Step ((& C:\mariadb\bin\mariadbd.exe --version 2>&1) -join ' ')
+          Step "bin contents: $((Get-ChildItem C:\mariadb\bin -Filter 'maria*' | Select-Object -ExpandProperty Name) -join ', ')"
+
+          # Initialise a data directory. Deliberately NO server options here: mariadb-install-db
+          # forwards unknown arguments to mysqld --bootstrap, which then aborts.
+          $install = & C:\mariadb\bin\mariadb-install-db.exe --datadir=C:\mariadb-data --password= 2>&1
+          $install | ForEach-Object { Add-Content -Path $diag -Value $_ -Encoding ASCII }
+          $install | Select-Object -Last 6 | ForEach-Object { Write-Host $_ }
+          Step "mariadb-install-db exit=$LASTEXITCODE"
           if ($LASTEXITCODE -ne 0) { throw "mariadb-install-db failed with $LASTEXITCODE" }
 
-          # Start the server detached; keep its console output for diagnostics.
+          # Server options belong on the server command line, not on the initialiser.
           $server = Start-Process -FilePath C:\mariadb\bin\mariadbd.exe `
-            -ArgumentList '--datadir=C:\mariadb-data','--port=3307','--console',`
-                          '--default-time-zone=+00:00','--character-set-server=utf8mb4',`
-                          '--collation-server=utf8mb4_unicode_ci','--bind-address=127.0.0.1' `
+            -ArgumentList '--datadir=C:\mariadb-data','--port=3307','--console',
+                          '--default-time-zone=+00:00','--character-set-server=utf8mb4',
+                          '--collation-server=utf8mb4_unicode_ci','--bind-address=127.0.0.1',
+                          '--skip-name-resolve' `
             -RedirectStandardOutput C:\mariadb-server.out -RedirectStandardError C:\mariadb-server.err `
             -PassThru -WindowStyle Hidden
           $server.Id | Out-File C:\mariadb.pid -Encoding ASCII
-          Write-Host "mariadbd PID $($server.Id)"
+          Step "mariadbd started, PID $($server.Id)"
 
           $client = 'C:\mariadb\bin\mariadb.exe'
           $ready = $false
           for ($i = 0; $i -lt 60; $i++) {
             & $client --protocol=TCP -h 127.0.0.1 -P 3307 -u root -e 'SELECT 1' 2>$null | Out-Null
-            if ($LASTEXITCODE -eq 0) { Write-Host "MariaDB accepting connections after $i s"; $ready = $true; break }
+            if ($LASTEXITCODE -eq 0) { Step "accepting connections after $i s"; $ready = $true; break }
             Start-Sleep -Seconds 1
           }
           if (-not $ready) {
-            Write-Host '---- mariadb-server.err ----'
-            Get-Content C:\mariadb-server.err -Tail 60 -ErrorAction SilentlyContinue
-            Write-Host '---- mariadb-server.out ----'
-            Get-Content C:\mariadb-server.out -Tail 60 -ErrorAction SilentlyContinue
+            foreach ($f in @('C:\mariadb-server.err','C:\mariadb-server.out')) {
+              if (Test-Path $f) {
+                Add-Content -Path $diag -Value "---- $f ----" -Encoding ASCII
+                Get-Content $f -Tail 40 | ForEach-Object { Add-Content -Path $diag -Value $_ -Encoding ASCII }
+              }
+            }
             throw 'MariaDB did not start on port 3307'
           }
 
-          & $client --protocol=TCP -h 127.0.0.1 -P 3307 -u root -e "SELECT VERSION() AS version, @@character_set_server AS charset, @@collation_server AS collation, @@time_zone AS tz;"
+          Step ((& $client --protocol=TCP -h 127.0.0.1 -P 3307 -u root -e "SELECT VERSION() AS v, @@character_set_server AS cs, @@collation_server AS coll, @@time_zone AS tz;" 2>&1) -join ' ')
+
+          # Users are created for both 127.0.0.1 and localhost: the JDBC driver connects over TCP,
+          # the CLI may not, and MySQL/MariaDB treat them as distinct accounts.
           $sql = @"
           CREATE DATABASE IF NOT EXISTS infeara_sales CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-          CREATE USER IF NOT EXISTS 'infeara_app'@'localhost' IDENTIFIED BY '$env:DB_PASSWORD';
           CREATE USER IF NOT EXISTS 'infeara_app'@'127.0.0.1' IDENTIFIED BY '$env:DB_PASSWORD';
-          GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON infeara_sales.* TO 'infeara_app'@'localhost';
+          CREATE USER IF NOT EXISTS 'infeara_app'@'localhost' IDENTIFIED BY '$env:DB_PASSWORD';
           GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON infeara_sales.* TO 'infeara_app'@'127.0.0.1';
+          GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON infeara_sales.* TO 'infeara_app'@'localhost';
           FLUSH PRIVILEGES;
           "@
-          $sqlFile = 'C:\mariadb-grant.sql'
-          [System.IO.File]::WriteAllText($sqlFile, $sql, (New-Object System.Text.UTF8Encoding($false)))
+          [System.IO.File]::WriteAllText('C:\mariadb-grant.sql', $sql, (New-Object System.Text.UTF8Encoding($false)))
           & $client --protocol=TCP -h 127.0.0.1 -P 3307 -u root -e "source C:/mariadb-grant.sql"
+          Step "grant exit=$LASTEXITCODE"
           if ($LASTEXITCODE -ne 0) { throw 'Database provisioning failed' }
-          & $client --protocol=TCP -h 127.0.0.1 -P 3307 -u infeara_app "-p$env:DB_PASSWORD" -e "SHOW DATABASES;" | Select-String 'infeara_sales'
-          Write-Host 'Database ready (utf8mb4, +00:00, least-privilege application user)'
+          & $client --protocol=TCP -h 127.0.0.1 -P 3307 -u infeara_app "-p$env:DB_PASSWORD" -e "SHOW DATABASES;" |
+            Select-String 'infeara_sales' | ForEach-Object { Step "verified: $_" }
+          Step 'database ready (utf8mb4, +00:00, least-privilege application user)'
 
       - name: Install Apache Tomcat 11
         shell: pwsh
@@ -690,6 +720,7 @@ jobs:
           $report += "### Windows deployment diagnostics - run $env:GITHUB_RUN_ID ($env:GITHUB_SHA)"
           $report += ''
           foreach ($pair in @(
+              @{ Title = 'ci-diag.log'; Path = 'C:\ci-diag.log' },
               @{ Title = 'mariadb-server.err'; Path = 'C:\mariadb-server.err' },
               @{ Title = 'mariadb-server.out'; Path = 'C:\mariadb-server.out' },
               @{ Title = 'tomcat console.log'; Path = 'C:\tomcat-logs\console.log' },
