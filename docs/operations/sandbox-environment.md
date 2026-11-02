@@ -44,6 +44,9 @@ on any normal machine is scripted and documented:
   container at `provided` scope (Tomcat supplies the container, as the spec requires).
 * `scripts/host-app.sh` — provisions MariaDB, renders `bin/setenv.sh`, deploys `ROOT.war`, starts
   Tomcat 11 and blocks until `/actuator/health` reports `UP`.
+* `scripts/war-preview.sh` — unpacks a WAR and serves the bytes Tomcat would serve from
+  `classpath:/static`; the closest honest preview of the packaged UI without a container
+  (no `/api/v1`, no database).
 * `scripts/serve-ui-static.sh` — serves the built UI from the sandbox for design review only
   (clearly labelled: no API is running).
 * `scripts/verify-toolchain.sh` — refuses to build unless the pinned versions are present.
