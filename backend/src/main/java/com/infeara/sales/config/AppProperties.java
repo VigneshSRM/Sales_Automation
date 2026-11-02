@@ -25,6 +25,16 @@ public class AppProperties {
         private String encryptionKey;
         private String encryptionKeyId = "k1";
         private String previousEncryptionKeys;
+        /**
+         * "auto" (default) marks the session cookie Secure only when the request itself arrived
+         * over TLS; "always" forces it; "never" is for local plain-HTTP development only.
+         *
+         * <p>Why not simply "production implies Secure": a Tomcat behind a TLS-terminating proxy
+         * sees plain HTTP on the connector, and a cookie marked Secure is then silently dropped by
+         * every browser and HTTP client. Deriving the flag from the request (with
+         * server.forward-headers-strategy advanced in prod) is correct in both topologies.
+         */
+        private String cookieSecure = "auto";
         private int sessionTtlMinutes = 480;
         private int sessionIdleMinutes = 60;
         private int maxFailedLogins = 5;

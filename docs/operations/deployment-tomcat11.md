@@ -229,3 +229,20 @@ sudo ./scripts/host-app.sh              # creates the schema, secrets, setenv.sh
 The sandbox used for this implementation cannot reach those hosts, which is documented in
 `docs/operations/sandbox-environment.md`; that is why the identical sequence runs in CI and the
 evidence is published to issue #1.
+
+### Defect found by the authenticated smoke test (2026-11-02)
+
+The first authenticated CI run exposed a session bug that the unauthenticated probe could not:
+`POST /api/v1/auth/mfa/enrol/confirm` returned `AUTHENTICATED` and set `INF_SESSION`, but every
+subsequent call answered `401 UNAUTHENTICATED`.
+
+Cause: the session cookie was marked `Secure` whenever `app.environment == production`. Tomcat's
+connector is plain HTTP behind the TLS-terminating proxy, so `request.isSecure()` is false and the
+browser (and `curl`, and any HTTP client) silently drops a `Secure` cookie on an http:// request.
+The session never arrived.
+
+Fix: `app.security.cookie-secure` (`auto` | `always` | `never`, default `auto`). In `auto` the flag
+follows the request — `request.isSecure()` or `X-Forwarded-Proto: https` — and `application-prod.yml`
+now sets `server.forward-headers-strategy: native` so the proxy's header is honoured. Set
+`APP_SECURITY_COOKIE_SECURE=always` if the application is ever served directly over HTTPS without a
+proxy.

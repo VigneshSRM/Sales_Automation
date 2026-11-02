@@ -6,6 +6,9 @@ spring:
       hibernate:
         generate_statistics: false
 server:
+  # The connector is plain HTTP behind the TLS-terminating proxy; parse Forwarded/X-Forwarded-*
+  # so request.isSecure() and RemoteIp reflect the real client and scheme.
+  forward-headers-strategy: native
   servlet:
     session:
       cookie:

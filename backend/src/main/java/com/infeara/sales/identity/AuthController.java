@@ -53,7 +53,7 @@ public class AuthController {
                                                      HttpServletResponse httpResponse) {
         var response = authService.login(request, clientIp(httpRequest), httpRequest.getHeader("User-Agent"));
         if (response.status() == AuthDtos.LoginStatus.AUTHENTICATED) {
-            setSessionCookie(httpResponse, response.sessionToken());
+            setSessionCookie(httpRequest, httpResponse, response.sessionToken());
             return ApiResponse.ok(sanitised(response), CorrelationIdFilter.currentRequestId());
         }
         return ApiResponse.ok(response, CorrelationIdFilter.currentRequestId());
@@ -65,7 +65,7 @@ public class AuthController {
                                                          HttpServletRequest httpRequest,
                                                          HttpServletResponse httpResponse) {
         var response = authService.verifyMfa(request, clientIp(httpRequest), httpRequest.getHeader("User-Agent"));
-        setSessionCookie(httpResponse, response.sessionToken());
+        setSessionCookie(httpRequest, httpResponse, response.sessionToken());
         return ApiResponse.ok(sanitised(response), CorrelationIdFilter.currentRequestId());
     }
 
@@ -84,7 +84,7 @@ public class AuthController {
             HttpServletResponse httpResponse) {
         var response = authService.confirmMfaEnrolment(request, clientIp(httpRequest),
                 httpRequest.getHeader("User-Agent"));
-        setSessionCookie(httpResponse, response.sessionToken());
+        setSessionCookie(httpRequest, httpResponse, response.sessionToken());
         return ApiResponse.ok(sanitised(response), CorrelationIdFilter.currentRequestId());
     }
 
@@ -95,7 +95,7 @@ public class AuthController {
         CurrentPrincipal principal = principalProvider.principalOrNull();
         String token = readSessionCookie(httpRequest);
         authService.logout(token, principal == null ? null : principal.userId());
-        clearSessionCookie(httpResponse);
+        clearSessionCookie(httpRequest, httpResponse);
         return ApiResponse.ok(java.util.Map.of("status", "SIGNED_OUT"), CorrelationIdFilter.currentRequestId());
     }
 
@@ -128,10 +128,10 @@ public class AuthController {
                 response.message());
     }
 
-    private void setSessionCookie(HttpServletResponse response, String token) {
+    private void setSessionCookie(HttpServletRequest request, HttpServletResponse response, String token) {
         ResponseCookie cookie = ResponseCookie.from(SessionAuthenticationFilter.SESSION_COOKIE, token)
                 .httpOnly(true)
-                .secure(properties.getEnvironment().equals("production"))
+                .secure(secureCookie(request))
                 .sameSite("Lax")
                 .path("/")
                 .maxAge(Duration.ofMinutes(properties.getSecurity().getSessionTtlMinutes()))
@@ -139,15 +139,36 @@ public class AuthController {
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
     }
 
-    private void clearSessionCookie(HttpServletResponse response) {
+    private void clearSessionCookie(HttpServletRequest request, HttpServletResponse response) {
         ResponseCookie cookie = ResponseCookie.from(SessionAuthenticationFilter.SESSION_COOKIE, "")
                 .httpOnly(true)
-                .secure(properties.getEnvironment().equals("production"))
+                .secure(secureCookie(request))
                 .sameSite("Lax")
                 .path("/")
                 .maxAge(Duration.ZERO)
                 .build();
         response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+    }
+
+    /**
+     * A Secure cookie is only ever sent over TLS. Marking it Secure on a plain-HTTP connector (a
+     * local run, or Tomcat behind a TLS-terminating proxy that is not configured to forward the
+     * scheme) makes every subsequent request unauthenticated — the failure looks like a broken
+     * session, not a cookie problem.
+     */
+    private boolean secureCookie(HttpServletRequest request) {
+        String mode = properties.getSecurity().getCookieSecure();
+        if ("always".equalsIgnoreCase(mode)) {
+            return true;
+        }
+        if ("never".equalsIgnoreCase(mode)) {
+            return false;
+        }
+        if (request.isSecure()) {
+            return true;
+        }
+        String forwardedProto = request.getHeader("X-Forwarded-Proto");
+        return forwardedProto != null && forwardedProto.toLowerCase(java.util.Locale.ROOT).startsWith("https");
     }
 
     private String readSessionCookie(HttpServletRequest request) {

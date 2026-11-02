@@ -111,6 +111,9 @@ app:
     encryption-key-id: ${SMTP_SECRET_ENCRYPTION_KEY_ID:k1}
     # Legacy key material accepted for decryption during rotation (comma separated id:key pairs)
     previous-encryption-keys: ${SMTP_SECRET_PREVIOUS_KEYS:}
+    # auto = Secure only when the request arrived over TLS (correct behind a TLS proxy once
+    # server.forward-headers-strategy sees X-Forwarded-Proto); always = force; never = local HTTP only.
+    cookie-secure: ${APP_SECURITY_COOKIE_SECURE:auto}
     session-ttl-minutes: ${SESSION_TTL_MINUTES:480}
     session-idle-minutes: ${SESSION_IDLE_MINUTES:60}
     max-failed-logins: 5

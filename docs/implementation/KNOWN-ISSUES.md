@@ -53,6 +53,15 @@ stays on this list until the code that fixes it is on `main` **and** verified.
 | L-4 | OpenAPI is generated but not published as a versioned artifact per release. | Consumers must read the running service. | Release 8 |
 | L-5 | `docs/api/endpoint-inventory.md` is generated on demand; it is not wired into CI. | Could go stale if someone forgets to regenerate. | Release 8 |
 
+## Fixed during verification (kept for the record)
+
+| # | Defect | How it was found | Fix |
+|---|---|---|---|
+| F-1 | Session cookie was marked `Secure` whenever the profile was `prod`, so behind a plain-HTTP connector every authenticated request was `401` while login reported success. | `scripts/smoke-authenticated.py` in CI: enrolment returned `AUTHENTICATED`, the next nine calls returned `401`. | `app.security.cookie-secure=auto` (request-derived, honours `X-Forwarded-Proto`) + `server.forward-headers-strategy: native` in the prod profile. |
+| F-2 | Three capabilities were enforced with no seed row (`leads.reopen`, `opportunities.assign`, `notifications.read`) → permanent 403 on six endpoints. | `tools/capability_audit.py` | `V10__missing_capabilities.sql`. |
+| F-3 | The RBAC seed failed on a phantom `roles.capability` column generated from an `@ElementCollection`. | First Tomcat boot (Flyway error 1364) | Schema generator skips collection fields; `scripts/validate-entities.py` guards it. |
+| F-4 | First-run bootstrap deadlocked: `audit.recordSystem` (REQUIRES_NEW) waited on an FK lock held by the seeding transaction. | First successful compile + boot | Seeding runs in a `TransactionTemplate`; the audit event is written after commit. |
+
 ## Explicitly *not* issues (decisions, not defects)
 
 * **No Redis / MongoDB / Firebase.** Async work uses the MariaDB outbox + job tables by design
