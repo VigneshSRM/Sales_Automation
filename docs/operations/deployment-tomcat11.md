@@ -190,6 +190,37 @@ The first green run (workflow run `41365290275`, commit `7100d889`) recorded:
 | RBAC seed + bootstrap | 66 capabilities, 10 roles, 1 user (bootstrap Super Admin), 1 audit row (`WORKSPACE_BOOTSTRAPPED`) |
 | Backend tests (gate) | 26/26 — `Tests run: 26, Failures: 0, Errors: 0`, including the two ArchUnit layering rules |
 
+### Authenticated end-to-end evidence (run `41402405623`)
+
+The unauthenticated probes above only prove the login page and the 401 envelope. `scripts/smoke-authenticated.py`
+now completes the whole authenticated path against the running Tomcat instance — password login → TOTP
+enrolment (code generated on the runner, verified against the RFC 6238 vectors) → session cookie → module
+reads → a CSRF-protected write:
+
+```
+[PASS] POST /api/v1/auth/login                 http=200 status=MFA_ENROLMENT_REQUIRED
+[PASS] POST /api/v1/auth/mfa/enrol/start       http=200 secret=present
+[PASS] POST /api/v1/auth/mfa/enrol/confirm     http=200 status=AUTHENTICATED
+[PASS] session cookie INF_SESSION              set
+[PASS] GET /api/v1/auth/me                     http=200 {'userId': 'fee9e062-…', 'workspaceId': '60806558-…'}
+[PASS] GET /api/v1/leads                       http=200 {'items': [], 'page': 0, 'size': 5, …}
+[PASS] GET /api/v1/dashboard                   http=200 {'periodStart': '2026-11-01', …}
+[PASS] GET /api/v1/email/accounts              http=200 []
+[PASS] GET /api/v1/email/inbox/stats           http=200 {'totalOpen': 0, 'unread': 0, …}
+[PASS] GET /api/v1/email/rules                 http=200 []
+[PASS] GET /api/v1/notifications/unread-count  http=200 {'count': 0}
+[PASS] GET /api/v1/audit-logs                  http=200 {'items': [{'actorType': 'SYSTEM', …}]}
+[PASS] GET /api/v1/catalog/stages              http=200 [{'code': 'NEW_OPPORTUNITY', …}]
+[PASS] CSRF cookie XSRF-TOKEN                  set
+[PASS] POST /api/v1/notifications/read-all     http=200 {'updated': 0}
+[PASS] GET /v3/api-docs                        http=200 paths=97
+All 16 authenticated checks passed
+```
+
+This is what "the application is hosted on Tomcat" means concretely: the same WAR serves the SPA at
+`/`, the REST API under `/api/v1` with RBAC and CSRF enforced, and the OpenAPI document at
+`/v3/api-docs`, against a migrated MariaDB schema seeded with 66 capabilities and 10 roles.
+
 ### Defects that only a real deployment could find
 
 Each of these was invisible to `mvn package` (which had already succeeded) and was fixed,
