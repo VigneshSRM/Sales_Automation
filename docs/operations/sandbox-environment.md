@@ -49,6 +49,10 @@ on any normal machine is scripted and documented:
   (no `/api/v1`, no database).
 * `scripts/serve-ui-static.sh` — serves the built UI from the sandbox for design review only
   (clearly labelled: no API is running).
+* `scripts/preview-api.py` — serves the built UI **and** a fixture `/api/v1/**` on one port, so the
+  shell boots past `GET /api/v1/auth/me` and every screen renders; `scripts/verify-preview.py`
+  checks all 23 pages and 45 fixture routes (69/69). Sample data only, banner on every page — see
+  `docs/operations/design-preview.md`.
 * `scripts/verify-toolchain.sh` — refuses to build unless the pinned versions are present.
 * `deploy/tomcat/setenv.sh`, `deploy/tomcat/context.xml` — container configuration.
 

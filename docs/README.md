@@ -41,3 +41,5 @@ The specification's eleven mandatory deliverables, and where each one lives.
 7. `deployment/DEPLOYMENT-GUIDE.md` → `operations/deployment-tomcat11.md` to run it on Tomcat 11.
 8. `operations/sandbox-environment.md` — exactly which verification steps were executed and which are
    only scripted (read this before believing any "it works" claim).
+9. `operations/design-preview.md` — reviewing the UI without JDK/MariaDB/Tomcat
+   (`scripts/preview-api.py` + `scripts/verify-preview.py`, 69/69 preview checks).
