@@ -1,8 +1,6 @@
 package com.infeara.sales.identity;
 
 import com.infeara.sales.common.api.ApiResponse;
-import com.infeara.sales.common.error.ApiException;
-import com.infeara.sales.common.error.ErrorCode;
 import com.infeara.sales.common.web.CorrelationIdFilter;
 import com.infeara.sales.config.AppProperties;
 import com.infeara.sales.identity.dto.AuthDtos;
@@ -37,15 +35,13 @@ public class AuthController {
 
     private final AuthService authService;
     private final SessionService sessionService;
-    private final UserRepository users;
     private final CurrentPrincipalProvider principalProvider;
     private final AppProperties properties;
 
-    public AuthController(AuthService authService, SessionService sessionService, UserRepository users,
+    public AuthController(AuthService authService, SessionService sessionService,
                           CurrentPrincipalProvider principalProvider, AppProperties properties) {
         this.authService = authService;
         this.sessionService = sessionService;
-        this.users = users;
         this.principalProvider = principalProvider;
         this.properties = properties;
     }
@@ -108,7 +104,7 @@ public class AuthController {
     public ApiResponse<AuthDtos.SessionInfo> me(HttpServletRequest httpRequest) {
         CurrentPrincipal principal = principalProvider.principal();
         Instant expiry = sessionService.expiryFor(readSessionCookie(httpRequest));
-        UserDtos.Profile profile = users.findById(principal.userId()).map(authService::profile).orElse(null);
+        UserDtos.Profile profile = authService.profileFor(principal.userId());
         return ApiResponse.ok(new AuthDtos.SessionInfo(principal.userId(), principal.workspaceId(),
                 principal.displayName(), principal.email(), principal.scopeType(), principal.timezone(),
                 principal.mfaSatisfied(),
@@ -121,9 +117,8 @@ public class AuthController {
     public ApiResponse<java.util.Map<String, String>> changePassword(
             @Valid @RequestBody AuthDtos.PasswordChangeRequest request) {
         CurrentPrincipal principal = principalProvider.principal();
-        User user = users.findById(principal.userId())
-                .orElseThrow(() -> new ApiException(ErrorCode.UNAUTHENTICATED, "Session user no longer exists"));
-        authService.changePassword(user, request.currentPassword(), request.newPassword());
+        authService.changePassword(authService.requireUser(principal.userId()),
+                request.currentPassword(), request.newPassword());
         return ApiResponse.ok(java.util.Map.of("status", "PASSWORD_CHANGED"),
                 CorrelationIdFilter.currentRequestId());
     }

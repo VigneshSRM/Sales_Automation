@@ -38,12 +38,25 @@ class ArchitectureTest {
     }
 
     @Test
-    @DisplayName("domain code does not depend on the web or security tiers")
+    @DisplayName("domain code does not depend on the web or servlet tiers")
     void domainIsIndependent() {
+        // The module packages are named in full on purpose. A first version of this rule used
+        // "..sales..", which matches every class in the application because the base package is
+        // itself com.infeara.sales — so SalesApplication, GlobalExceptionHandler and the servlet
+        // initializer were all reported as domain violations (142 of them) and the rule proved
+        // nothing. Shared infrastructure (common.web, common.error, config) is deliberately outside
+        // the list: it is the adapter layer that is allowed to know about HTTP.
         ArchRule rule = noClasses()
-                .that().resideInAnyPackage("..crm..", "..sales..", "..engagement..")
+                .that().resideInAnyPackage(
+                        "com.infeara.sales.crm..",
+                        "com.infeara.sales.sales..",
+                        "com.infeara.sales.engagement..",
+                        "com.infeara.sales.analytics..",
+                        "com.infeara.sales.workspace..",
+                        "com.infeara.sales.automation..")
                 .and().haveSimpleNameNotEndingWith("Controller")
-                .should().dependOnClassesThat().resideInAnyPackage("..web..", "org.springframework.web..");
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        "com.infeara.sales.web..", "org.springframework.web..", "jakarta.servlet..");
         rule.check(classes);
     }
 

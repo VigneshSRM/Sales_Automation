@@ -191,6 +191,19 @@ public class AuthService {
         sessions.revokeAllForUser(user.getId());
     }
 
+    /** Profile for a user id, or {@code null} when the session user no longer exists. */
+    @Transactional(readOnly = true)
+    public UserDtos.Profile profileFor(String userId) {
+        return users.findById(userId).map(this::profile).orElse(null);
+    }
+
+    /** The session user, or {@code UNAUTHENTICATED} when the row is gone. */
+    @Transactional(readOnly = true)
+    public User requireUser(String userId) {
+        return users.findById(userId)
+                .orElseThrow(() -> new ApiException(ErrorCode.UNAUTHENTICATED, "Session user no longer exists"));
+    }
+
     public UserDtos.Profile profile(User user) {
         List<String> capabilities = userRoles.findCapabilitiesByUserId(user.getId());
         List<String> roles = userRoles.findRoleCodesByUserId(user.getId());
