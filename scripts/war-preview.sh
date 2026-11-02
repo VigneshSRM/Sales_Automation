@@ -13,6 +13,12 @@
 # What it is NOT: no servlet container, no Spring context, no /api/v1, no database. Every
 # API call fails with 404 and the UI shows its error state. It does not prove the backend
 # runs — nothing can, here.
+#
+# The payload is unpacked into dist/.preview (inside the workspace, gitignored with dist/)
+# rather than a mktemp directory. A temp directory is deleted with the process and is not
+# part of a workspace snapshot: if the sandbox restarts while the server is still alive, a
+# temp docroot turns the preview into a 404 shell. Keeping it in dist/ means a restart of
+# this script is idempotent and the process can be managed independently of the shell.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -21,8 +27,9 @@ PORT="${2:-${PORT:-3000}}"
 
 [ -f "$WAR" ] || { echo "WAR not found: $WAR" >&2; exit 1; }
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/war-preview-XXXXXX")"
-trap 'rm -rf "$WORK"' EXIT
+WORK="$(cd "$(dirname "$WAR")" && pwd)/.preview"
+rm -rf "$WORK"
+mkdir -p "$WORK"
 python3 - "$WAR" "$WORK" <<'PY'
 import sys, zipfile
 war, out = sys.argv[1], sys.argv[2]
