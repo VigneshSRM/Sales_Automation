@@ -12,6 +12,12 @@ migrations and *real* application.yml, so it also proves those artefacts sit at 
 the WAR contract requires.
 
 Run:  python3 scripts/verify-war-selftest.py
+      python3 scripts/verify-war-selftest.py --emit dist/infeara-sales-os.FIXTURE.war
+
+--emit keeps the conforming fixture so it can be inspected, or served by scripts/war-preview.sh
+as a container-free preview of the WAR payload. It is a *packaging fixture*, not a compiled WAR:
+the UI export, the migrations and the configuration are real; the launcher class is a stub because
+no JDK exists in the authoring environment.
 """
 from __future__ import annotations
 
@@ -94,7 +100,11 @@ def run_verifier(war: Path) -> tuple[int, str]:
     return process.returncode, process.stdout + process.stderr
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    emit_to = None
+    if "--emit" in argv:
+        emit_to = Path(argv[argv.index("--emit") + 1]).resolve()
     if not (STATIC_DIR / "index.html").is_file():
         print("Build the UI first: cd frontend && npm run build", file=sys.stderr)
         return 2
@@ -132,6 +142,13 @@ def main() -> int:
             print("Verifier did not flag:", ", ".join(missing))
         else:
             print("-> verifier rejected the archive for every expected reason")
+        if emit_to is not None:
+            emit_to.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(golden, emit_to)
+            print(f"\nKept the conforming fixture at {emit_to}")
+            print("  NOTE: packaging fixture only - UI, migrations and config are real, the")
+            print("        launcher class is a stub because this environment has no JDK.")
+            print(f"        Serve it with: ./scripts/war-preview.sh {emit_to}")
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
