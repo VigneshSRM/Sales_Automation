@@ -16,7 +16,9 @@ server:
   tomcat:
     accesslog:
       enabled: true
-      directory: /var/log/tomcat/access
+      # Relative to CATALINA_BASE, so it works on Linux (logs/) and Windows (logs\ access etc.)
+      # without a hardcoded absolute path. Override with ACCESS_LOG_DIR when a log volume is used.
+      directory: ${ACCESS_LOG_DIR:logs}
       pattern: "%h %l %u %t \"%r\" %s %b %D"
 app:
   environment: production

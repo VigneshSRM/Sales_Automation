@@ -602,6 +602,7 @@ jobs:
           logging.logback.rollingpolicy.max-history=7
           logging.level.com.infeara.sales=INFO
           "@
+          $props += "`nserver.tomcat.accesslog.directory=$logsPosix/access`n"
 
           # UTF-8 WITHOUT BOM: java.util.Properties does not strip a BOM and PowerShell 5.1's
           # -Encoding UTF8 writes one, which would silently rename the first key.
@@ -647,7 +648,7 @@ jobs:
         shell: pwsh
         run: |
           $healthy = $false
-          for ($i = 0; $i -lt 120; $i++) {
+          for ($i = 0; $i -lt 180; $i++) {
             try {
               $r = Invoke-WebRequest 'http://localhost:8080/actuator/health' -UseBasicParsing -TimeoutSec 5
               if ($r.Content -match '"status":"UP"') { Write-Host "HEALTH UP after $i s"; Write-Host $r.Content; $healthy = $true; break }
@@ -722,17 +723,36 @@ jobs:
           foreach ($pair in @(
               @{ Title = 'ci-diag.log'; Path = 'C:\ci-diag.log' },
               @{ Title = 'mariadb-server.err'; Path = 'C:\mariadb-server.err' },
-              @{ Title = 'mariadb-server.out'; Path = 'C:\mariadb-server.out' },
               @{ Title = 'tomcat console.log'; Path = 'C:\tomcat-logs\console.log' },
-              @{ Title = 'tomcat stderr.log'; Path = 'C:\tomcat-logs\stderr.log' },
-              @{ Title = 'application log'; Path = (Join-Path $env:INFEARA_DATA 'logs\sales-os.log') })) {
+              @{ Title = 'tomcat stderr.log'; Path = 'C:\tomcat-logs\stderr.log' })) {
             if (Test-Path $pair.Path) {
               $report += "#### $($pair.Title)"
               $report += '```'
-              $report += (Get-Content $pair.Path -Tail 60 -ErrorAction SilentlyContinue) -join "`n"
+              $report += (Get-Content $pair.Path -Tail 80 -ErrorAction SilentlyContinue) -join "`n"
               $report += '```'
             }
           }
+          # Tomcat's own log files are complete: redirected stdout is buffered and truncated
+          # when the process is killed, which hides the real startup error.
+          foreach ($dir in @('C:\tomcat\logs', (Join-Path $env:INFEARA_DATA 'logs'))) {
+            if (-not (Test-Path $dir)) { continue }
+            Get-ChildItem $dir -Filter '*.log' -File -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending | Select-Object -First 4 | ForEach-Object {
+                $report += "#### $($_.FullName) ($($_.Length) bytes)"
+                $report += '```'
+                $report += (Get-Content $_.FullName -Tail 100 -ErrorAction SilentlyContinue) -join "`n"
+                $report += '```'
+              }
+          }
+          $report += '#### deployment state'
+          $report += '```'
+          $report += "ROOT.war present: $(Test-Path 'C:\tomcat\webapps\ROOT.war')"
+          $report += "ROOT exploded:    $(Test-Path 'C:\tomcat\webapps\ROOT')"
+          $report += '--- setenv.bat ---'
+          $report += ((Get-Content 'C:\tomcat\bin\setenv.bat' -ErrorAction SilentlyContinue) -join "`n")
+          $report += '--- infeara.properties (secrets removed) ---'
+          $report += ((Get-Content (Join-Path $env:INFEARA_DATA 'conf\infeara.properties') -ErrorAction SilentlyContinue) -join "`n")
+          $report += '```'
           $report += '#### environment'
           $report += '```'
           $report += "DB_PORT=$env:DB_PORT JAVA_HOME=$env:JAVA_HOME"
