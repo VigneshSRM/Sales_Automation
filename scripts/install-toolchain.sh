@@ -24,7 +24,8 @@ set -euo pipefail
 
 JAVA_VERSION="17"
 MAVEN_VERSION="3.9.11"
-TOMCAT_VERSION="11.0.14"
+# Pinned to the exact patch proven by CI (.github/workflows/build-and-host-war.yml).
+TOMCAT_VERSION="11.0.27"
 MARIADB_CHANNEL="11.4"
 INSTALL_ROOT="${INSTALL_ROOT:-/opt/infeara}"
 PROFILE_FILE="/etc/profile.d/infeara-sales.sh"

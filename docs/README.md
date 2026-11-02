@@ -10,7 +10,7 @@ The specification's eleven mandatory deliverables, and where each one lives.
 | 4 | API documentation | `api/API-SPECIFICATION.md`, `api/endpoint-inventory.md` (generated) | Delivered (114 endpoints, incl. the two-way email module) |
 | 5 | Security checklist | `security/security-checklist.md` | Delivered; open items listed |
 | 6 | Test plan & traceability | `testing/test-plan.md`, `requirements/traceability-matrix.md` | Delivered |
-| 7 | Deployment guide (WAR on Tomcat 11) + env template | `deployment/DEPLOYMENT-GUIDE.md`, `operations/deployment-tomcat11.md`, `../deploy/env/.env.example` | Delivered |
+| 7 | Deployment guide (WAR on Tomcat 11) + env template | `deployment/DEPLOYMENT-GUIDE.md`, `operations/installation-setup.md` (full install & setup), `operations/deployment-tomcat11.md`, `../deploy/env/.env.example` | Delivered |
 | 8 | Backup & recovery guide | `operations/backup-recovery.md` | Delivered |
 | 9 | UAT scenarios | `testing/uat-scenarios.md` | Delivered (20 scenarios, status per scenario) |
 | 10 | Release completion reports | `releases/release-0.md` … `releases/release-3.md`, `releases/release-3b-two-way-email.md` | Delivered for 0–3 and the addendum; 4–8 not started |
@@ -41,5 +41,8 @@ The specification's eleven mandatory deliverables, and where each one lives.
 7. `deployment/DEPLOYMENT-GUIDE.md` → `operations/deployment-tomcat11.md` to run it on Tomcat 11.
 8. `operations/sandbox-environment.md` — exactly which verification steps were executed and which are
    only scripted (read this before believing any "it works" claim).
-9. `operations/design-preview.md` — reviewing the UI without JDK/MariaDB/Tomcat
+9. `operations/installation-setup.md` — full installation and setup: per-component manual install,
+   Tomcat hardening + systemd, TLS proxy, first-run bootstrap/MFA, integrations, upgrade/rollback,
+   uninstall, troubleshooting.
+10. `operations/design-preview.md` — reviewing the UI without JDK/MariaDB/Tomcat
    (`scripts/preview-api.py` + `scripts/verify-preview.py`, 69/69 preview checks).
