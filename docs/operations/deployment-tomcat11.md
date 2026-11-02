@@ -188,6 +188,7 @@ The first green run (workflow run `41365290275`, commit `7100d889`) recorded:
 | Flyway | 10/10 migrations `success = 1` (`V1`…`V10`) |
 | Schema | 83 tables = 82 application tables + `flyway_schema_history` |
 | RBAC seed + bootstrap | 66 capabilities, 10 roles, 1 user (bootstrap Super Admin), 1 audit row (`WORKSPACE_BOOTSTRAPPED`) |
+| Backend tests (gate) | 26/26 — `Tests run: 26, Failures: 0, Errors: 0`, including the two ArchUnit layering rules |
 
 ### Defects that only a real deployment could find
 

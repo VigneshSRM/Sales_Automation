@@ -28,7 +28,7 @@ what exists, what is schema-only, and what has been *verified*.
 | Deployed API | ✅ **Serving** | `GET /api/v1/auth/me` → 401 `UNAUTHENTICATED` envelope; `POST /api/v1/auth/login` → 200 `MFA_ENROLMENT_REQUIRED` with an enrolment token; `GET /v3/api-docs` → 200, 97 `/api/**` paths |
 | First-run bootstrap | ✅ **Verified** | 1 workspace, 1 Super Admin, 66 capabilities, 10 roles, 1 `WORKSPACE_BOOTSTRAPPED` audit row |
 | Frontend unit tests | ✅ **28 passing** | `npx vitest run` → 4 files / 28 tests (formatting, API error mapping, component behaviour, mailbox API route contract) |
-| Backend unit + architecture tests | ❌ **Executed and failing** | 6 JUnit classes (`PasswordPolicyTest`, `PageQueryTest`, `SecretCipherTest`, `TotpServiceTest`, `LeadStatusTest`, `ArchitectureTest`) run by CI as an informational step (`continue-on-error`); Maven reports `BUILD FAILURE` and the diagnostics are published to issue #1. Fixing them is next action #1 |
+| Backend unit + architecture tests | ✅ **26 passing** | CI run `41366662641`: `Tests run: 26, Failures: 0, Errors: 0` → `BUILD SUCCESS`. The suite now gates the build (it ran informationally for one round while the architecture rules were repaired) |
 | Integration tests | ⚠️ **Authored, not executed** | `SchemaMigrationIT` (Testcontainers MariaDB 11.4) verifies V1–V7 apply and the schema contains the core tables; needs Docker |
 | Static cross-checking | ✅ **Run** | `tools/static_audit.py` → 215 files, one benign finding (two controllers share the `/api/v1` prefix) |
 | Capability audit | ✅ **Run** | `tools/capability_audit.py` → 66 seeded, 44 enforced in Java, 10 gated in the UI, **0 used-but-unseeded** (it found three missing seeds, fixed in V10) |
@@ -43,7 +43,8 @@ what exists, what is schema-only, and what has been *verified*.
 > the RBAC seed are verified. Nothing that needs a third party has been exercised: no SMTP send, no IMAP
 > session, no AI provider call, no Calendly webhook. The JUnit/Testcontainers suites run in CI as an
 > informational step and currently fail (see §5), so **"tests pass" is not a claim this repository can
-> make yet**. Treat the business workflows as unverified end-to-end.
+> make yet**. Treat the business workflows as unverified end-to-end: 26 unit/architecture tests pass,
+> but no test exercises a repository, a controller or a transaction.
 
 ---
 
@@ -134,8 +135,8 @@ Legend — **Implemented**: endpoints + validation + persistence + domain rules 
 
 ## 5. Next actions, in order
 
-1. Fix the failing JUnit suite (`mvn test` in CI prints the diagnostics in the issue comment); the
-   build itself is green, so this is about proving behaviour, not about making the WAR build.
+1. Extend the backend suite beyond the 26 unit/architecture tests: the Testcontainers
+   `SchemaMigrationIT` still needs a run, and none of the mailbox/AI/policy logic has a test yet.
 2. `sudo ./scripts/install-toolchain.sh && ./scripts/build-war.sh && sudo ./scripts/host-app.sh` on a
    host with normal egress reproduces the verified deployment (see `docs/operations/deployment-tomcat11.md` §11).
 3. Against a real mailbox: add it, **Test**, enable, send yourself one message, confirm it appears in

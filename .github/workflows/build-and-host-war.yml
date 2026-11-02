@@ -103,8 +103,7 @@ jobs:
           set -o pipefail
           mvn -B -ntp clean package -DskipTests 2>&1 | tee /tmp/mvn.log
 
-      - name: Backend unit tests (informational)
-        continue-on-error: true
+      - name: Backend unit and architecture tests
         working-directory: backend
         run: |
           set -o pipefail
@@ -224,7 +223,7 @@ jobs:
             echo "OpenAPI paths         -> $(grep -o '\"/api/[^\"]*\"' /tmp/openapi.json 2>/dev/null | sort -u | wc -l)"
             echo '```'
             echo
-            echo "#### Backend test suite (informational, does not gate deployment)"
+            echo "#### Backend test suite (gates the build)"
             echo '```'
             grep -E "Tests run:|BUILD (SUCCESS|FAILURE)" /tmp/test.log 2>/dev/null | head -12
             grep -A 4 "Architecture Violation" /tmp/test.log 2>/dev/null | head -40
