@@ -105,6 +105,7 @@ jobs:
 
       - name: Backend unit tests (informational)
         continue-on-error: true
+        working-directory: backend
         run: |
           set -o pipefail
           mvn -B -ntp test 2>&1 | tee /tmp/test.log | tail -60
