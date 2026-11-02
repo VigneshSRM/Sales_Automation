@@ -619,6 +619,20 @@ jobs:
           @{ conf = $confPosix; logs = $logsPosix } | ConvertTo-Json |
             Set-Content -Path C:\infeara-conf.json -Encoding ASCII
 
+      - name: Exclude deployment paths from Windows Defender
+        shell: pwsh
+        run: |
+          # Not a convenience: on-access scanning of a 75 MB WAR and its 101 extracted jars is
+          # the single largest cost of a first start on Windows, and it can push a cold start
+          # past any sane health timeout. The production guidance says the same (see
+          # docs/operations/windows-deployment.md).
+          try {
+            Add-MpPreference -ExclusionPath 'C:\tomcat', $env:INFEARA_DATA, 'C:\mariadb-data'
+            Write-Host 'Defender exclusions added'
+          } catch {
+            Write-Host "Could not add Defender exclusions: $($_.Exception.Message)"
+          }
+
       - name: Deploy ROOT.war and start Tomcat
         shell: pwsh
         run: |
@@ -648,22 +662,34 @@ jobs:
         shell: pwsh
         run: |
           $healthy = $false
-          for ($i = 0; $i -lt 180; $i++) {
+          for ($i = 0; $i -lt 300; $i++) {
             try {
               $r = Invoke-WebRequest 'http://localhost:8080/actuator/health' -UseBasicParsing -TimeoutSec 5
               if ($r.Content -match '"status":"UP"') { Write-Host "HEALTH UP after $i s"; Write-Host $r.Content; $healthy = $true; break }
+              if ($i % 20 -eq 0) { Write-Host "[${i}s] health responded but not UP: $($r.StatusCode) $($r.Content)" }
             } catch {
-              if ($i % 15 -eq 0 -and $i -gt 0) { Write-Host "still waiting ($i s): $($_.Exception.Message)" }
+              $code = $_.Exception.Response.StatusCode.value__
+              if ($i % 20 -eq 0) {
+                $body = ''
+                try {
+                  $stream = $_.Exception.Response.GetResponseStream()
+                  if ($stream) { $body = (New-Object System.IO.StreamReader($stream)).ReadToEnd() }
+                } catch { }
+                Write-Host "[${i}s] not ready: code=$code $($_.Exception.Message) $body"
+              }
             }
             Start-Sleep -Seconds 1
           }
           if (-not $healthy) {
-            Write-Host '---- console.log tail ----'
-            Get-Content C:\tomcat-logs\console.log -Tail 120 -ErrorAction SilentlyContinue
-            Write-Host '---- stderr.log tail ----'
-            Get-Content C:\tomcat-logs\stderr.log -Tail 60 -ErrorAction SilentlyContinue
-            Write-Host '---- application log tail ----'
-            Get-Content (Join-Path $env:INFEARA_DATA 'logs\sales-os.log') -Tail 120 -ErrorAction SilentlyContinue
+            $today = Get-Date -Format 'yyyy-MM-dd'
+            foreach ($f in @("C:\tomcat\logs\localhost.$today.log", "C:\tomcat\logs\catalina.$today.log",
+                             'C:\ProgramData\Infeara\logs\sales-os.log')) {
+              Write-Host "---- $f ----"
+              Get-Content $f -Tail 60 -ErrorAction SilentlyContinue
+            }
+            Write-Host '---- listeners ----'
+            Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+              Where-Object { $_.LocalPort -in 8080, 3307 } | Format-Table -AutoSize
             throw 'Application did not become healthy'
           }
 
