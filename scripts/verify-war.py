@@ -202,6 +202,13 @@ def main(argv: list[str]) -> int:
                        "every secret is an environment placeholder"
                        if not hardcoded else f"hardcoded value(s): {hardcoded[:3]}")
 
+        in_war_config = [n for n in names if n == "WEB-INF/classes/infeara.properties"]
+        result.add_advisory("config.in-war-properties", (
+            "WEB-INF/classes/infeara.properties packaged (editable after deployment; "
+            "secrets stay as ${ENV_VAR:} placeholders)"
+            if in_war_config else
+            "WEB-INF/classes/infeara.properties missing - operators cannot configure the WAR"))
+
         band = "within" if 5 <= size_mb <= 120 else "outside"
         result.add_advisory("size.info",
                             f"{size_mb:.1f} MB ({band} the typical 5–120 MB band for this WAR)")

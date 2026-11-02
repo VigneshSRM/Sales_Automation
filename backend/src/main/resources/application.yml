@@ -8,6 +8,16 @@ spring:
     name: infeara-sales-os
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
+  config:
+    # In-WAR configuration, editable after deployment without a rebuild:
+    #   exploded:  $CATALINA_BASE/webapps/ROOT/WEB-INF/classes/infeara.properties
+    #   or patch the artifact:  scripts/configure-war.py <war> --set key=value
+    # Imported documents are applied after this file, so they win over the defaults
+    # below. Every value there is written as ${ENV_VAR:default}, so an operator can
+    # either fill in a literal (manual install) or keep using environment variables
+    # (CI/containers) with no change in behaviour. "optional:" keeps the WAR usable
+    # if the file has been removed.
+    import: optional:classpath:/infeara.properties
   datasource:
     url: jdbc:mariadb://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_NAME:infeara_sales}?useUnicode=true&characterEncoding=utf8&useServerPrepStmts=true&useBulkStmts=false&connectTimeout=5000&socketTimeout=30000
     username: ${DB_USER:infeara_app}

@@ -125,6 +125,18 @@ jobs:
           set -o pipefail
           python3 scripts/verify-war.py backend/target/infeara-sales-os.war 2>&1 | tee /tmp/verify.log
 
+      - name: Prove the in-WAR configuration is applied
+        run: |
+          set -euo pipefail
+          WAR=backend/target/infeara-sales-os.war
+          # The WAR carries WEB-INF/classes/infeara.properties and application.yml imports it.
+          # Writing a literal value into that file and observing the effect is the only way to
+          # prove the import works: a silent fallback to defaults would look identical.
+          unzip -p "$WAR" WEB-INF/classes/infeara.properties | head -3
+          python3 scripts/configure-war.py "$WAR" --set logging.file.name=/tmp/war-config-proof.log
+          rm -f /tmp/war-config-proof.log
+          unzip -p "$WAR" WEB-INF/classes/infeara.properties | grep -n '^logging.file.name='
+
       - name: Download Apache Tomcat 11
         run: |
           curl -fsSL --retry 3 -o /tmp/tomcat.tgz \
@@ -172,6 +184,23 @@ jobs:
           echo "::error::Application did not become healthy"
           tail -n 200 /opt/tomcat/logs/catalina.out || true
           exit 1
+
+      - name: Assert the in-WAR configuration took effect
+        run: |
+          set -euo pipefail
+          # logging.file.name came from WEB-INF/classes/infeara.properties (nothing else sets it),
+          # so this file existing proves the classpath import was applied at startup.
+          for i in $(seq 1 20); do
+            if [ -s /tmp/war-config-proof.log ]; then break; fi
+            sleep 1
+          done
+          if [ ! -s /tmp/war-config-proof.log ]; then
+            echo "::error::in-WAR configuration was not applied - logging.file.name had no effect"
+            unzip -p backend/target/infeara-sales-os.war WEB-INF/classes/infeara.properties | grep -n '^logging'
+            exit 1
+          fi
+          echo "in-WAR configuration applied: $(wc -l < /tmp/war-config-proof.log) log line(s) at /tmp/war-config-proof.log"
+          head -3 /tmp/war-config-proof.log
 
       - name: Smoke test the deployed WAR (UI + API + OpenAPI)
         run: |

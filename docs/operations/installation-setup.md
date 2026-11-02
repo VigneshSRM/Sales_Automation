@@ -369,6 +369,25 @@ curl -s http://localhost:8080/actuator/health
 WAR name for auto-deployment. **Never** deploy as `infeara-sales-os.war` — the UI would 404 on every
 asset.
 
+### Configuration inside the WAR (default) or outside it
+
+The WAR carries `WEB-INF/classes/infeara.properties`, imported by `application.yml`
+(`spring.config.import=optional:classpath:/infeara.properties`). Two ways to use it:
+
+| Approach | Command | Survives redeploy? |
+| --- | --- | --- |
+| Edit the deployed (exploded) file | `$EDITOR $CATALINA_BASE/webapps/ROOT/WEB-INF/classes/infeara.properties`, then restart Tomcat | **No** — a new WAR replaces the directory |
+| Patch the artefact | `python3 scripts/configure-war.py <war> --set key=value` (or `--from-env key=ENV_VAR`) | Yes — the value is inside the WAR |
+| Environment variables (`setenv.sh` / `SPRING_CONFIG_ADDITIONAL_LOCATION`) | as documented below | Yes, and they win over the file |
+
+Every key in `infeara.properties` is written as `${ENV_VAR:default}`, so the same artefact serves a
+manual install (paste literals) and an automated one (keep variables). Paths in that file use forward
+slashes — a backslash is an escape character in `.properties` files.
+
+Security: as shipped the file contains no secret. Once you write a real password, encryption key or
+AI key into it, the WAR **contains a credential** — keep it out of git and artifact storage, and
+restrict it on the host (`chmod 600`, or `icacls ... /inheritance:r /grant:r "InfearaSalesOS:(R)"`).
+
 ### Environment reference
 
 Minimum for `prod` (all names are read directly by `application.yml` — do not rename):

@@ -179,7 +179,21 @@ context path serves an unstyled page.
 
 ---
 
-## 6. Configuration outside the WAR
+## 6. Configuration
+
+Two supported places, and both can be in use at once:
+
+| Where | How | Use it when |
+| --- | --- | --- |
+| **Inside the WAR** — `WEB-INF/classes/infeara.properties` | edit `C:\Program Files\Infeara\tomcat\webapps\ROOT\WEB-INF\classes\infeara.properties` and restart the service, or patch the artefact with `scripts/configure-war.py <war> --set key=value` | you want the keys to travel with the artefact, or a single-host manual install |
+| **Outside the WAR** — `C:\ProgramData\Infeara\conf\*.properties` via `SPRING_CONFIG_ADDITIONAL_LOCATION` | written by `host-app.ps1` | secret manager, multiple hosts, or you must not modify the artefact |
+
+Precedence, highest first: `SPRING_CONFIG_ADDITIONAL_LOCATION` files → `WEB-INF/classes/infeara.properties` → `application-prod.yml` → `application.yml`. Environment variables resolve wherever a value is written as `${VAR}`.
+
+If you edit the exploded copy, remember it does **not** survive a WAR redeploy — `host-app.ps1`
+replaces the whole `webapps\ROOT` directory. Keep your edited file, or patch the WAR itself.
+
+## 6a. Configuration outside the WAR (ProgramData)
 
 The WAR contains no credentials. Everything deployment-specific lives in two files that
 `host-app.ps1` generates and ACLs, and that are loaded at startup via

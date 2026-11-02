@@ -193,8 +193,39 @@ python3 tools/capability_audit.py                     # capability strings vs se
 
 ## Configuration
 
-Everything is environment-driven; **no credential appears in source control**. Minimum needed to
-boot in `prod`:
+Configuration lives **inside the WAR**, in `WEB-INF/classes/infeara.properties`, and you can edit it
+after the build — no rebuild, no `setenv` hunting:
+
+```bash
+# see every key (secrets masked)
+python3 scripts/configure-war.py dist/infeara-sales-os.war --print
+
+# set the keys by hand, in the artefact
+python3 scripts/configure-war.py dist/infeara-sales-os.war \
+    --set spring.datasource.password='...' \
+    --set app.security.encryption-key='...' \
+    --set app.ai.openrouter.api-key='...'
+
+# or edit the deployed copy, which survives restarts:
+#   $CATALINA_BASE/webapps/ROOT/WEB-INF/classes/infeara.properties   (Linux)
+#   C:\Program Files\Infeara\tomcat\webapps\ROOT\WEB-INF\classes\infeara.properties
+```
+
+`application.yml` imports that file (`spring.config.import=optional:classpath:/infeara.properties`),
+so its values win over the packaged defaults. Every value ships as `${ENV_VAR:default}`, which means
+both models work with one artefact: fill in a literal (manual install) or set the environment
+variable (CI, containers). Precedence: `SPRING_CONFIG_ADDITIONAL_LOCATION` file > `infeara.properties`
+> `application-prod.yml` > `application.yml`; environment variables resolve wherever a value is
+written as `${VAR}`.
+
+**Security note that comes with this choice:** while the values are placeholders the WAR contains no
+secret and is safe to distribute. The moment you write a real password or key into it, that WAR
+carries a credential — keep it out of git and build artifacts, and restrict the deployed file
+(`chmod 600`; on Windows `icacls ... /inheritance:r /grant:r "InfearaSalesOS:(R)"`). For
+multi-host installs, prefer `scripts/configure-war.py --from-env` at deploy time so the secret comes
+from your secret manager rather than from a file someone copied.
+
+Minimum needed even with the file in place (env vars still work for every one of these):
 
 | Variable | Purpose |
 | --- | --- |
@@ -227,6 +258,9 @@ Notes that save real debugging time:
   nginx server block is in `docs/operations/installation-setup.md`.
 * **AI and inbound mail left empty is a supported state**: the UI says analysis is unavailable
   instead of showing fabricated classifications.
+* **Editing `webapps/ROOT/WEB-INF/classes/infeara.properties` survives a restart but not a WAR
+  redeploy** — redeploying replaces the exploded directory. Keep your edited copy, or patch the WAR
+  with `scripts/configure-war.py` so the value travels with the artefact.
 
 ## After installation
 
