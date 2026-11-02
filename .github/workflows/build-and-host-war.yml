@@ -109,6 +109,11 @@ jobs:
           set -o pipefail
           mvn -B -ntp test 2>&1 | tee /tmp/test.log | tail -60
 
+      - name: Prove the static checkers still detect defects
+        run: |
+          python3 scripts/validate-migrations-selftest.py
+          python3 scripts/verify-war-selftest.py | tail -5
+
       - name: Validate the Flyway script set
         run: python3 scripts/validate-migrations.py
 
@@ -220,7 +225,7 @@ jobs:
             echo
             echo "#### Backend test suite (informational, does not gate deployment)"
             echo '```'
-            grep -E "Tests run:|BUILD (SUCCESS|FAILURE)|^\[ERROR\] Tests run|^\[ERROR\]   " /tmp/test.log 2>/dev/null | head -25
+            grep -E "Tests run:|BUILD (SUCCESS|FAILURE)|^\[ERROR\]" /tmp/test.log 2>/dev/null | head -30
             echo '```'
             echo
             echo "#### Authenticated API through the same WAR"

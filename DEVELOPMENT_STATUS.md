@@ -3,7 +3,11 @@
 **Snapshot:** 2026-11-02 · **Branch state:** working tree (release trains 0–3 plus the addendum
 two-way-email module; meetings/Calendly, the ten AI agents, workflows and commercial modules remain)
 **Repository size:** 215 Java sources, 49 entities, 82 tables across 10 Flyway migrations,
-25 frontend routes; frontend build and tests pass, backend still never compiled.
+25 frontend routes.
+**Deployment status:** the single WAR has been **built and deployed to a real Apache Tomcat 11.0.27**,
+and the running application answers `/actuator/health`, serves the UI from `/` and returns the
+documented JSON envelopes from `/api/v1/**`. See §1 and
+`docs/operations/deployment-tomcat11.md` §11 for the recorded evidence.
 
 Read this file before trusting any other claim about the system. It is the single source of truth for
 what exists, what is schema-only, and what has been *verified*.
@@ -16,22 +20,30 @@ what exists, what is schema-only, and what has been *verified*.
 |---|---|---|
 | Frontend type-check | ✅ **Passing** | `cd frontend && npx tsc --noEmit` → no diagnostics |
 | Frontend production build | ✅ **Passing** | `npm run build` → 22 static routes exported, copied into `backend/src/main/resources/static` (WAR root) |
-| Backend compilation (`mvn verify`) | ❌ **Not run** | No JDK and no Maven in the authoring environment; Maven Central is unreachable from it (HTTP 000). **The Java has never been compiled.** |
-| Flyway migration execution | ❌ **Not run** | No MariaDB instance available; no Docker daemon |
+| Backend compilation (`mvn clean package`) | ✅ **Passing** | CI run `41365290275`: 861-entry / 75.8 MB WAR, `BUILD SUCCESS` in 26 s. The authoring sandbox still cannot compile (no JDK/Maven, Maven Central blocked) — the build runs on a stock `ubuntu-24.04` runner |
+| Flyway migration execution | ✅ **Passing** | All 10 migrations (`V1`–`V10`) applied with `success = 1` against MariaDB 11.4 on the runner |
+| Tomcat 11 deployment | ✅ **Verified** | Tomcat 11.0.27, WAR deployed as `ROOT.war`, `Server startup` logged, context started |
+| `/actuator/health` | ✅ **UP** | `{"groups":["liveness","readiness"],"status":"UP"}` |
+| Deployed UI | ✅ **Serving** | `GET /` → 200 (8 843 B), `GET /leads/` → 200, `GET /engagement/mailbox/` → 200, hashed `/_next/static/**` asset → 200 |
+| Deployed API | ✅ **Serving** | `GET /api/v1/auth/me` → 401 `UNAUTHENTICATED` envelope; `POST /api/v1/auth/login` → 200 `MFA_ENROLMENT_REQUIRED` with an enrolment token; `GET /v3/api-docs` → 200, 97 `/api/**` paths |
+| First-run bootstrap | ✅ **Verified** | 1 workspace, 1 Super Admin, 66 capabilities, 10 roles, 1 `WORKSPACE_BOOTSTRAPPED` audit row |
 | Frontend unit tests | ✅ **28 passing** | `npx vitest run` → 4 files / 28 tests (formatting, API error mapping, component behaviour, mailbox API route contract) |
-| Backend unit + architecture tests | ⚠️ **Authored, not executed** | 6 JUnit classes in `backend/src/test/java` (`PasswordPolicyTest`, `PageQueryTest`, `SecretCipherTest`, `TotpServiceTest`, `LeadStatusTest`, `ArchitectureTest`); need JDK 17 |
+| Backend unit + architecture tests | ❌ **Executed and failing** | 6 JUnit classes (`PasswordPolicyTest`, `PageQueryTest`, `SecretCipherTest`, `TotpServiceTest`, `LeadStatusTest`, `ArchitectureTest`) run by CI as an informational step (`continue-on-error`); Maven reports `BUILD FAILURE` and the diagnostics are published to issue #1. Fixing them is next action #1 |
 | Integration tests | ⚠️ **Authored, not executed** | `SchemaMigrationIT` (Testcontainers MariaDB 11.4) verifies V1–V7 apply and the schema contains the core tables; needs Docker |
 | Static cross-checking | ✅ **Run** | `tools/static_audit.py` → 215 files, one benign finding (two controllers share the `/api/v1` prefix) |
 | Capability audit | ✅ **Run** | `tools/capability_audit.py` → 66 seeded, 44 enforced in Java, 10 gated in the UI, **0 used-but-unseeded** (it found three missing seeds, fixed in V10) |
 | Java symbol audit (compile surrogate) | ✅ **Run** | `tools/java_symbol_audit.py` → 215 types, 1011 field-qualified call sites verified, **0 missing methods** (limitation: it cannot type local variables/parameters, so it is a filter, not a compiler) |
 | Entity ↔ migration parity | ✅ **Run** | `tools/schema_report.py` → 49 entities / 82 tables, no column mismatches (now follows `ALTER TABLE … ADD COLUMN`) |
 | Data dictionary | ✅ Generated | `tools/data_dictionary.py` → `docs/database/data-dictionary.md` (82 tables) |
-| WAR packaging contract | ✅ **Proven** | `scripts/verify-war-selftest.py` → 24 assertions; conforming archive accepted, broken archive rejected for 14 reasons |
-| Tomcat deployment | ❌ **Not run** | No Tomcat binary and no compiler in this environment; fully scripted (`install-toolchain.sh` → `build-war.sh` → `host-app.sh`), see `docs/operations/sandbox-environment.md` §4 |
+| WAR packaging contract | ✅ **Proven on the real WAR** | `scripts/verify-war.py` → 24/24 checks on the 75.8 MB artifact; `scripts/verify-war-selftest.py` → 24 assertions (conforming archive accepted, broken archive rejected for 14 reasons) |
+| Migration static checks | ✅ **Run** | `scripts/validate-migrations.py` → 10 migrations / 82 tables, no unknown keys, foreign keys or data targets (its selftest replays the two production defects) |
+| Entity ↔ schema cross-check | ✅ **Run** | `scripts/validate-entities.py` → 49 entities, every mapped column present in the migrations, 33 tables still unmapped (schema-only modules) |
 
-> **Do not describe the backend as working, tested or production-ready.** The Java is complete in
-> structure and cross-checked statically, but the first `mvn verify` will almost certainly surface
-> compile errors — that is the next task, and it is listed as the top next action.
+> **What the green deployment does *not* prove.** Compilation, schema creation, boot, HTTP serving and
+> the RBAC seed are verified. Nothing that needs a third party has been exercised: no SMTP send, no IMAP
+> session, no AI provider call, no Calendly webhook. The JUnit/Testcontainers suites run in CI as an
+> informational step and currently fail (see §5), so **"tests pass" is not a claim this repository can
+> make yet**. Treat the business workflows as unverified end-to-end.
 
 ---
 
@@ -122,11 +134,10 @@ Legend — **Implemented**: endpoints + validation + persistence + domain rules 
 
 ## 5. Next actions, in order
 
-1. On a machine with normal egress: `sudo ./scripts/install-toolchain.sh`, then
-   `./scripts/build-war.sh --with-tests` → fix compile errors (nothing has been compiled yet;
-   `tools/java_symbol_audit.py` catches only field-qualified call errors).
-2. `sudo ./scripts/host-app.sh` → confirm Tomcat 11 serves the UI at `/` and the API at `/api/v1`,
-   Flyway applies V1–V9 and `ddl-auto=validate` passes.
+1. Fix the failing JUnit suite (`mvn test` in CI prints the diagnostics in the issue comment); the
+   build itself is green, so this is about proving behaviour, not about making the WAR build.
+2. `sudo ./scripts/install-toolchain.sh && ./scripts/build-war.sh && sudo ./scripts/host-app.sh` on a
+   host with normal egress reproduces the verified deployment (see `docs/operations/deployment-tomcat11.md` §11).
 3. Against a real mailbox: add it, **Test**, enable, send yourself one message, confirm it appears in
    the unified inbox once (dedupe), is threaded, and produces an AI analysis or a clear
    "provider not configured" state.
