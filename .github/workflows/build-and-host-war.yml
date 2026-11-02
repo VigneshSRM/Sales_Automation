@@ -200,6 +200,14 @@ jobs:
               print("  ", path)
           PY
 
+      - name: Authenticated smoke test (MFA enrolment, module reads, CSRF-protected write)
+        run: |
+          set -o pipefail
+          python3 scripts/smoke-authenticated.py \
+            --base-url http://localhost:8080 \
+            --email ci-admin@infeara.local \
+            --password 'CiOnly-Passw0rd!2026' 2>&1 | tee /tmp/auth-smoke.log
+
       - name: Deployed schema inventory
         run: |
           sudo apt-get install -y -qq mariadb-client >/dev/null 2>&1 || true
@@ -221,6 +229,11 @@ jobs:
             echo "GET /api/v1/auth/me   -> $(curl -s -m 15 -w ' http=%{http_code}' http://localhost:8080/api/v1/auth/me)"
             echo "GET /v3/api-docs      -> $(curl -s -m 30 -o /tmp/openapi.json -w '%{http_code}' http://localhost:8080/v3/api-docs)"
             echo "OpenAPI paths         -> $(grep -o '\"/api/[^\"]*\"' /tmp/openapi.json 2>/dev/null | sort -u | wc -l)"
+            echo '```'
+            echo
+            echo "#### Authenticated end-to-end smoke (login -> MFA enrolment -> module reads -> CSRF write)"
+            echo '```'
+            cat /tmp/auth-smoke.log 2>/dev/null || echo "not reached"
             echo '```'
             echo
             echo "#### Backend test suite (gates the build)"
