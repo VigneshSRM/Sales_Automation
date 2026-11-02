@@ -107,7 +107,7 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          mvn -B -ntp test 2>&1 | tee /tmp/test.log | grep -E "Tests run|BUILD|ERROR\]   [A-Z]" | tail -40
+          mvn -B -ntp test 2>&1 | tee /tmp/test.log | tail -60
 
       - name: Validate the Flyway script set
         run: python3 scripts/validate-migrations.py
@@ -218,9 +218,9 @@ jobs:
             echo "OpenAPI paths         -> $(grep -o '\"/api/[^\"]*\"' /tmp/openapi.json 2>/dev/null | sort -u | wc -l)"
             echo '```'
             echo
-            echo "#### Backend test suite"
+            echo "#### Backend test suite (informational, does not gate deployment)"
             echo '```'
-            grep -E "Tests run:|BUILD (SUCCESS|FAILURE)" /tmp/test.log 2>/dev/null | tail -8
+            grep -E "Tests run:|BUILD (SUCCESS|FAILURE)|^\[ERROR\] Tests run|^\[ERROR\]   " /tmp/test.log 2>/dev/null | head -25
             echo '```'
             echo
             echo "#### Authenticated API through the same WAR"
