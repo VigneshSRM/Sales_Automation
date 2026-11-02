@@ -33,7 +33,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * First-run provisioning. Creates the workspace, its editable catalogues (services,
@@ -69,6 +69,7 @@ public class WorkspaceBootstrapService implements ApplicationRunner {
     private final AuditRecorder audit;
     private final AppProperties properties;
     private final Clock clock;
+    private final TransactionTemplate transactions;
 
     public WorkspaceBootstrapService(WorkspaceRepository workspaces, WorkspaceSettingRepository settings,
                                      UserRepository users, RoleRepository roles, UserRoleRepository userRoles,
@@ -76,7 +77,8 @@ public class WorkspaceBootstrapService implements ApplicationRunner {
                                      LeadSourceRepository sources, PipelineStageRepository stages,
                                      LossReasonRepository lossReasons, ScoringModelRepository scoringModels,
                                      PasswordEncoder passwordEncoder, JsonCodec jsonCodec, AuditRecorder audit,
-                                     AppProperties properties, Clock clock) {
+                                     AppProperties properties, Clock clock,
+                                     TransactionTemplate transactions) {
         this.workspaces = workspaces;
         this.settings = settings;
         this.users = users;
@@ -93,10 +95,10 @@ public class WorkspaceBootstrapService implements ApplicationRunner {
         this.audit = audit;
         this.properties = properties;
         this.clock = clock;
+        this.transactions = transactions;
     }
 
     @Override
-    @Transactional
     public void run(ApplicationArguments args) {
         AppProperties.Bootstrap config = properties.getBootstrap();
         if (workspaces.existsBySlug(config.getWorkspaceSlug())) {
@@ -109,6 +111,26 @@ public class WorkspaceBootstrapService implements ApplicationRunner {
         }
         PasswordPolicy.validate(config.getAdminPassword());
 
+        SeedResult seeded = transactions.execute(status -> seedWorkspace(config));
+        if (seeded == null) {
+            return;
+        }
+        // Recorded only after the seeding transaction has committed. AuditRecorder.recordSystem
+        // opens its own transaction (Propagation.REQUIRES_NEW); calling it while the workspace
+        // row was still uncommitted made that transaction wait for a foreign-key lock it could
+        // never obtain, and Tomcat's startup died on a socket read timeout.
+        audit.recordSystem(seeded.workspaceId(), "WORKSPACE_BOOTSTRAPPED", "WORKSPACE", seeded.workspaceId(),
+                Map.of("slug", config.getWorkspaceSlug(), "sources", seeded.sources(),
+                        "adminEmail", seeded.email()),
+                Map.of("catalogueVersion", "v1", "requiresProductOwnerReview", true));
+        log.info("bootstrap_complete workspace={} admin={} (MFA enrolment required at first login)",
+                config.getWorkspaceSlug(), seeded.email());
+    }
+
+    private record SeedResult(String workspaceId, String email, int sources) {
+    }
+
+    private SeedResult seedWorkspace(AppProperties.Bootstrap config) {
         Workspace workspace = new Workspace();
         workspace.setId(Ids.newId());
         workspace.setName(config.getWorkspaceName());
@@ -161,12 +183,7 @@ public class WorkspaceBootstrapService implements ApplicationRunner {
         link.setAssignedBy(null);
         userRoles.save(link);
 
-        audit.recordSystem(workspaceId, "WORKSPACE_BOOTSTRAPPED", "WORKSPACE", workspaceId,
-                Map.of("slug", workspace.getSlug(), "sources", createdSources.size(),
-                        "adminEmail", email),
-                Map.of("catalogueVersion", "v1", "requiresProductOwnerReview", true));
-        log.info("bootstrap_complete workspace={} admin={} (MFA enrolment required at first login)",
-                workspace.getSlug(), email);
+        return new SeedResult(workspaceId, email, createdSources.size());
     }
 
     private void seedSetting(String workspaceId, String key, Object value) {
