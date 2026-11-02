@@ -82,3 +82,17 @@ sudo ./scripts/install-toolchain.sh          # JDK 17 + Maven 3.9 + Tomcat 11.0.
 sudo ./scripts/host-app.sh                   # DB, setenv.sh, ROOT.war, health check
 curl -s localhost:8080/actuator/health       # {"status":"UP"}
 ```
+
+## Where the build actually runs
+
+| Path | Works in this sandbox? | Notes |
+|---|---|---|
+| `./scripts/build-war.sh` locally | No | needs JDK 17 + Maven Central, both unreachable here (`jdk4py` ships a JRE only) |
+| `.github/workflows/build-and-host-war.yml` | Yes | the real build **and** the Tomcat 11 deployment, on a stock `ubuntu-24.04` runner |
+| Reading CI logs with `gh run view --log` | No | `results-receiver.actions.githubusercontent.com` is blocked from here (EOF) |
+| Evidence via issue #1 comment | Yes | the workflow publishes health/UI/API/schema evidence on every run |
+
+The workflow is therefore the canonical "clean environment" proof for this repository:
+it installs the toolchain, builds the single WAR, deploys it to a real Tomcat 11.0.27,
+and publishes the HTTP and database evidence to issue #1 (see §11 of
+`deployment-tomcat11.md` for the recorded green run).

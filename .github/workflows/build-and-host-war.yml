@@ -103,6 +103,12 @@ jobs:
           set -o pipefail
           mvn -B -ntp clean package -DskipTests 2>&1 | tee /tmp/mvn.log
 
+      - name: Backend unit tests (informational)
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          mvn -B -ntp test 2>&1 | tee /tmp/test.log | grep -E "Tests run|BUILD|ERROR\]   [A-Z]" | tail -40
+
       - name: Validate the Flyway script set
         run: python3 scripts/validate-migrations.py
 
@@ -210,6 +216,26 @@ jobs:
             echo "GET /api/v1/auth/me   -> $(curl -s -m 15 -w ' http=%{http_code}' http://localhost:8080/api/v1/auth/me)"
             echo "GET /v3/api-docs      -> $(curl -s -m 30 -o /tmp/openapi.json -w '%{http_code}' http://localhost:8080/v3/api-docs)"
             echo "OpenAPI paths         -> $(grep -o '\"/api/[^\"]*\"' /tmp/openapi.json 2>/dev/null | sort -u | wc -l)"
+            echo '```'
+            echo
+            echo "#### Backend test suite"
+            echo '```'
+            grep -E "Tests run:|BUILD (SUCCESS|FAILURE)" /tmp/test.log 2>/dev/null | tail -8
+            echo '```'
+            echo
+            echo "#### Authenticated API through the same WAR"
+            echo '```'
+            echo "POST /api/v1/auth/login -> $(curl -s -m 20 -c /tmp/cookies.txt -o /tmp/login.json \
+              -w '%{http_code}' -H 'Content-Type: application/json' \
+              -d '{"email":"ci-admin@infeara.local","password":"CiOnly-Passw0rd!2026"}' \
+              http://localhost:8080/api/v1/auth/login)"
+            echo "response: $(head -c 400 /tmp/login.json)"
+            echo "GET /api/v1/leads -> $(curl -s -m 20 -b /tmp/cookies.txt -o /tmp/leads.json \
+              -w '%{http_code}' http://localhost:8080/api/v1/leads)"
+            echo "response: $(head -c 400 /tmp/leads.json)"
+            echo "GET /api/v1/email/accounts -> $(curl -s -m 20 -b /tmp/cookies.txt -o /tmp/accounts.json \
+              -w '%{http_code}' http://localhost:8080/api/v1/email/accounts)"
+            echo "response: $(head -c 400 /tmp/accounts.json)"
             echo '```'
             echo
             echo "#### Database after the first boot"

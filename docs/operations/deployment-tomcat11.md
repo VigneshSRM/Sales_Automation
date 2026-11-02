@@ -162,3 +162,69 @@ that should serve HTTP only.
       replies; otherwise leave the default (everything goes to a human)
 - [ ] Backups scheduled and a restore has been rehearsed
 - [ ] Audit chain verified (`SELECT count(*) FROM audit_logs` growing, no gaps)
+
+## 11. Verified deployment (recorded evidence)
+
+The deployment in §2–§6 is not a claim: it runs on every push to this branch through
+`.github/workflows/build-and-host-war.yml` (JDK 17 Temurin, Node 22, MariaDB 11.4 service,
+Apache Tomcat 11.0.27 downloaded from the Apache archive, WAR copied to
+`$CATALINA_BASE/webapps/ROOT.war`). The workflow posts the evidence block to the repository's
+tracking issue (#1) on **every** run, success or failure, so the result is readable without
+access to the CI logs.
+
+The first green run (workflow run `41365290275`, commit `7100d889`) recorded:
+
+| Evidence | Result |
+|---|---|
+| WAR artefact | `infeara-sales-os.war`, 862 entries, 75.8 MB, uploaded as `infeara-sales-os-war` (70.9 MB zipped) |
+| Packaging contract | 24/24 checks in `scripts/verify-war.py` |
+| Tomcat | 11.0.27, `ROOT.war` deployed, `Server startup` logged |
+| `GET /actuator/health` | `{"groups":["liveness","readiness"],"status":"UP"}` |
+| `GET /` (Next.js export served by Tomcat) | 200, 8 843 bytes |
+| `GET /leads/` | 200 |
+| `GET /engagement/mailbox/` | 200 — the addendum inbox is inside the same WAR |
+| `GET /api/v1/auth/me` (no session) | 401 with the documented error envelope (`UNAUTHENTICATED`, requestId echo) |
+| `GET /v3/api-docs` | 200, 97 unique `/api/**` paths |
+| Flyway | 10/10 migrations `success = 1` (`V1`…`V10`) |
+| Schema | 83 tables = 82 application tables + `flyway_schema_history` |
+| RBAC seed + bootstrap | 66 capabilities, 10 roles, 1 user (bootstrap Super Admin), 1 audit row (`WORKSPACE_BOOTSTRAPPED`) |
+
+### Defects that only a real deployment could find
+
+Each of these was invisible to `mvn package` (which had already succeeded) and was fixed,
+committed and re-verified:
+
+1. `V1` declared a `UNIQUE KEY` over `outbox_events.dedupe_key`, a column that only exists on
+   `leads`/`notifications` → MariaDB error 1072, Flyway aborted. `tools/generate_schema.py` now
+   refuses to emit a key over a column the entity does not declare.
+2. `V5` declared a foreign key to `service_offerings`; the table is `services` → error 150.
+   `scripts/validate-migrations.py` (new) now checks the whole script set statically, and its
+   selftest replays both production defects.
+3. The schema generator read `@Column(name = "capability")` on `Role.capabilities` (an
+   `@ElementCollection`) as a real column → `roles.capability NOT NULL` and error 1364 on the RBAC
+   seed. Collection-typed fields are now skipped.
+4. `JobEngine` took `List<JobHandler>` in its constructor → `BeanCurrentlyInCreationException`
+   (`jobEngine → mailboxSyncJobHandler → mailboxSyncService → inboundEmailService → jobEngine`).
+   Handlers are now resolved lazily through `ObjectProvider<JobHandler>`.
+5. The first-run bootstrap called `AuditRecorder.recordSystem` (`REQUIRES_NEW`) while its own
+   transaction still held the new workspace row → the audit insert waited on a foreign-key lock
+   until the socket timed out. Seeding now runs in an explicit `TransactionTemplate` and the audit
+   event is written after the commit.
+6. `scripts/validate-entities.py` (new) cross-checks every `@Entity` against the migrated columns,
+   including the 18 columns `V8` adds to `email_messages` via `ALTER TABLE`, so a
+   `ddl-auto=validate` failure cannot reach a deployment again.
+
+### Reproducing it yourself
+
+On any host with network access to Maven Central and the Apache archive:
+
+```bash
+sudo ./scripts/install-toolchain.sh     # JDK 17, Maven 3.9, Tomcat 11.0.27, MariaDB 11.4
+./scripts/verify-toolchain.sh           # prints the pinned versions it found
+./scripts/build-war.sh                  # frontend → WAR → scripts/verify-war.py
+sudo ./scripts/host-app.sh              # creates the schema, secrets, setenv.sh, deploys ROOT.war
+```
+
+The sandbox used for this implementation cannot reach those hosts, which is documented in
+`docs/operations/sandbox-environment.md`; that is why the identical sequence runs in CI and the
+evidence is published to issue #1.
