@@ -1,0 +1,44 @@
+# Development-only infrastructure. Production runs on Tomcat 11 + external MariaDB —
+# this file must never be used for a production deployment.
+services:
+  mariadb:
+    image: mariadb:11.4
+    container_name: infeara-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: dev-root-password
+      MARIADB_DATABASE: infeara_sales
+      MARIADB_USER: infeara
+      MARIADB_PASSWORD: dev-password
+      TZ: UTC
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-time-zone=+00:00
+      --innodb-buffer-pool-size=512M
+    ports:
+      - "3306:3306"
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Catches every outbound message so SMTP integration can be tested without
+  # delivering to real recipients. Configure an SMTP profile: host=localhost port=1025,
+  # TLS NONE, any username/password.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: infeara-mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI: http://localhost:8025
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+
+volumes:
+  mariadb-data:

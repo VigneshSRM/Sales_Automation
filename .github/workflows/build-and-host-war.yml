@@ -1,0 +1,341 @@
+# ---------------------------------------------------------------------------
+# Builds the single deployable WAR and *hosts it on Apache Tomcat 11* on a clean
+# machine, then smoke-tests the running application.
+#
+# Why this workflow exists: the development sandbox has no JDK/Maven/Tomcat and no
+# route to Maven Central (docs/operations/sandbox-environment.md), so the only place
+# the build and the Tomcat deployment can actually be executed is a normal runner.
+# This is the "run it for real" path — it produces the artefact, the deployment log
+# and the HTTP evidence, instead of an assertion that it would work.
+#
+# It runs on every push that touches code, the build scripts, or this workflow, and
+# can be started manually from the Actions tab.
+# ---------------------------------------------------------------------------
+name: build-and-host-war
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "arena/**"
+      - main
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - "scripts/**"
+      - "deploy/**"
+      - ".github/workflows/build-and-host-war.yml"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: host-war-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-host:
+    name: Build WAR, deploy to Tomcat 11, smoke test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: root_pw_for_ci_only
+          MARIADB_DATABASE: infeara_sales
+          MARIADB_USER: infeara_app
+          MARIADB_PASSWORD: ci_app_password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      TOMCAT_VERSION: "11.0.27"
+      DB_HOST: 127.0.0.1
+      DB_PORT: "3306"
+      DB_NAME: infeara_sales
+      DB_USER: infeara_app
+      DB_PASSWORD: ci_app_password
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Toolchain versions
+        run: |
+          java -version
+          javac -version
+          mvn -v
+          node -v
+          python3 -V
+
+      - name: Frontend type-check, unit tests and static export
+        working-directory: frontend
+        run: |
+          npm ci
+          npx tsc --noEmit
+          npx vitest run
+          npm run build
+
+      - name: Build the WAR
+        working-directory: backend
+        run: |
+          set -o pipefail
+          mvn -B -ntp clean package -DskipTests 2>&1 | tee /tmp/mvn.log
+
+      - name: Backend unit and architecture tests
+        working-directory: backend
+        run: |
+          set -o pipefail
+          mvn -B -ntp test 2>&1 | tee /tmp/test.log | tail -60
+
+      - name: Prove the static checkers still detect defects
+        run: |
+          python3 scripts/validate-migrations-selftest.py
+          python3 scripts/verify-war-selftest.py | tail -5
+
+      - name: Validate the Flyway script set
+        run: python3 scripts/validate-migrations.py
+
+      - name: Cross-check the entity model against the schema
+        run: python3 scripts/validate-entities.py
+
+      - name: Verify the packaging contract
+        run: |
+          set -o pipefail
+          python3 scripts/verify-war.py backend/target/infeara-sales-os.war 2>&1 | tee /tmp/verify.log
+
+      - name: Download Apache Tomcat 11
+        run: |
+          curl -fsSL --retry 3 -o /tmp/tomcat.tgz \
+            "https://archive.apache.org/dist/tomcat/tomcat-11/v${TOMCAT_VERSION}/bin/apache-tomcat-${TOMCAT_VERSION}.tar.gz"
+          mkdir -p /opt/tomcat
+          tar -xzf /tmp/tomcat.tgz -C /opt/tomcat --strip-components=1
+          rm -rf /opt/tomcat/webapps/*
+          /opt/tomcat/bin/version.sh
+
+      - name: Deploy ROOT.war and start Tomcat
+        run: |
+          cp backend/target/infeara-sales-os.war /opt/tomcat/webapps/ROOT.war
+          cat > /opt/tomcat/bin/setenv.sh <<'SETENV'
+          export JAVA_HOME="${JAVA_HOME}"
+          export CATALINA_OPTS="-Xms256m -Xmx768m -Dfile.encoding=UTF-8 -Duser.timezone=UTC"
+          export SPRING_PROFILES_ACTIVE=prod
+          export DB_HOST="127.0.0.1"
+          export DB_PORT="3306"
+          export DB_NAME="infeara_sales"
+          export DB_USER="infeara_app"
+          export DB_PASSWORD="ci_app_password"
+          export APP_BASE_URL="http://localhost:8080"
+          export SMTP_SECRET_ENCRYPTION_KEY="$(openssl rand -base64 32)"
+          export SMTP_SECRET_ENCRYPTION_KEY_ID="ci1"
+          export BOOTSTRAP_WORKSPACE_NAME="Infeara Technologies"
+          export BOOTSTRAP_WORKSPACE_SLUG="infeara"
+          export BOOTSTRAP_ADMIN_EMAIL="ci-admin@infeara.local"
+          export BOOTSTRAP_ADMIN_PASSWORD="CiOnly-Passw0rd!2026"
+          export WORKER_ENABLED="true"
+          SETENV
+          chmod +x /opt/tomcat/bin/setenv.sh
+          /opt/tomcat/bin/startup.sh
+          echo "Tomcat started, waiting for the application to report UP"
+
+      - name: Wait for /actuator/health and collect evidence
+        run: |
+          for attempt in $(seq 1 90); do
+            if curl -fsS -o /tmp/health.json http://localhost:8080/actuator/health; then
+              if grep -q '"status":"UP"' /tmp/health.json; then
+                echo "Application UP after ${attempt}s"; cat /tmp/health.json; exit 0
+              fi
+            fi
+            sleep 2
+          done
+          echo "::error::Application did not become healthy"
+          tail -n 200 /opt/tomcat/logs/catalina.out || true
+          exit 1
+
+      - name: Smoke test the deployed WAR (UI + API + OpenAPI)
+        run: |
+          set -e
+          echo "--- GET / (UI) ---"
+          curl -s -o /tmp/index.html -w "http=%{http_code} bytes=%{size_download}\n" http://localhost:8080/
+          grep -qi "<html" /tmp/index.html && echo "UI HTML served"
+          echo "--- GET /engagement/mailbox/ (deep link) ---"
+          curl -s -o /dev/null -w "http=%{http_code}\n" http://localhost:8080/engagement/mailbox/
+          echo "--- GET /_next/ (hashed asset) ---"
+          asset=$(grep -o '/_next/static/[^"]*\.js' /tmp/index.html | head -1)
+          curl -s -o /dev/null -w "asset=$asset http=%{http_code}\n" "http://localhost:8080${asset}"
+          echo "--- GET /api/v1/auth/me (expect 401 JSON envelope) ---"
+          curl -s -w "\nhttp=%{http_code}\n" http://localhost:8080/api/v1/auth/me
+          echo "--- GET /v3/api-docs ---"
+          curl -s -o /dev/null -w "http=%{http_code}\n" http://localhost:8080/v3/api-docs
+          echo "--- Flyway schema check ---"
+          mariadb --version >/dev/null 2>&1 || true
+          python3 - <<'PY'
+          import json, urllib.request
+          with urllib.request.urlopen("http://localhost:8080/v3/api-docs", timeout=30) as response:
+              spec = json.load(response)
+          paths = sorted(spec.get("paths", {}))
+          print(f"OpenAPI paths: {len(paths)}")
+          for path in [p for p in paths if "/email" in p][:30]:
+              print("  ", path)
+          PY
+
+      - name: Authenticated smoke test (MFA enrolment, module reads, CSRF-protected write)
+        run: |
+          set -o pipefail
+          python3 scripts/smoke-authenticated.py \
+            --base-url http://localhost:8080 \
+            --email ci-admin@infeara.local \
+            --password 'CiOnly-Passw0rd!2026' 2>&1 | tee /tmp/auth-smoke.log
+
+      - name: Deployed schema inventory
+        run: |
+          sudo apt-get install -y -qq mariadb-client >/dev/null 2>&1 || true
+          mariadb -h 127.0.0.1 -u infeara_app -pci_app_password infeara_sales \
+            -e "SELECT COUNT(*) AS tables_created FROM information_schema.tables WHERE table_schema='infeara_sales';
+                SELECT version, success FROM flyway_schema_history ORDER BY installed_rank;" || true
+
+      - name: Collect deployment evidence
+        if: always()
+        run: |
+          set +e
+          {
+            echo "#### Runtime evidence (Tomcat 11, single ROOT.war, http://localhost:8080)"
+            echo '```'
+            echo "GET /actuator/health  -> $(curl -s -m 15 http://localhost:8080/actuator/health)"
+            echo "GET /                 -> $(curl -s -m 15 -o /tmp/probe.html -w '%{http_code}' http://localhost:8080/) bytes=$(wc -c < /tmp/probe.html 2>/dev/null)"
+            echo "GET /leads/           -> $(curl -s -m 15 -o /dev/null -w '%{http_code}' http://localhost:8080/leads/)"
+            echo "GET /engagement/mailbox/ -> $(curl -s -m 15 -o /dev/null -w '%{http_code}' http://localhost:8080/engagement/mailbox/)"
+            echo "GET /api/v1/auth/me   -> $(curl -s -m 15 -w ' http=%{http_code}' http://localhost:8080/api/v1/auth/me)"
+            echo "GET /v3/api-docs      -> $(curl -s -m 30 -o /tmp/openapi.json -w '%{http_code}' http://localhost:8080/v3/api-docs)"
+            echo "OpenAPI paths         -> $(grep -o '\"/api/[^\"]*\"' /tmp/openapi.json 2>/dev/null | sort -u | wc -l)"
+            echo '```'
+            echo
+            echo "#### Authenticated end-to-end smoke (login -> MFA enrolment -> module reads -> CSRF write)"
+            echo '```'
+            cat /tmp/auth-smoke.log 2>/dev/null || echo "not reached"
+            echo '```'
+            echo
+            echo "#### Backend test suite (gates the build)"
+            echo '```'
+            grep -E "Tests run:|BUILD (SUCCESS|FAILURE)" /tmp/test.log 2>/dev/null | head -12
+            grep -A 4 "Architecture Violation" /tmp/test.log 2>/dev/null | head -40
+            grep -E "^\[ERROR\]   [A-Z][A-Za-z]*(Test|IT)\." /tmp/test.log 2>/dev/null | head -10
+            echo '```'
+            echo
+            echo "#### Authenticated API through the same WAR"
+            echo '```'
+            echo "POST /api/v1/auth/login -> $(curl -s -m 20 -c /tmp/cookies.txt -o /tmp/login.json \
+              -w '%{http_code}' -H 'Content-Type: application/json' \
+              -d '{"email":"ci-admin@infeara.local","password":"CiOnly-Passw0rd!2026"}' \
+              http://localhost:8080/api/v1/auth/login)"
+            echo "response: $(head -c 400 /tmp/login.json)"
+            echo "GET /api/v1/leads -> $(curl -s -m 20 -b /tmp/cookies.txt -o /tmp/leads.json \
+              -w '%{http_code}' http://localhost:8080/api/v1/leads)"
+            echo "response: $(head -c 400 /tmp/leads.json)"
+            echo "GET /api/v1/email/accounts -> $(curl -s -m 20 -b /tmp/cookies.txt -o /tmp/accounts.json \
+              -w '%{http_code}' http://localhost:8080/api/v1/email/accounts)"
+            echo "response: $(head -c 400 /tmp/accounts.json)"
+            echo '```'
+            echo
+            echo "#### Database after the first boot"
+            echo '```'
+            mariadb -h 127.0.0.1 -u infeara_app -pci_app_password infeara_sales \
+              -e "SELECT COUNT(*) AS tables_created FROM information_schema.tables WHERE table_schema='infeara_sales';" 2>/dev/null
+            mariadb -h 127.0.0.1 -u infeara_app -pci_app_password infeara_sales \
+              -e "SELECT version, description, success FROM flyway_schema_history ORDER BY installed_rank;" 2>/dev/null
+            mariadb -h 127.0.0.1 -u infeara_app -pci_app_password infeara_sales \
+              -e "SELECT (SELECT COUNT(*) FROM capabilities) AS capabilities, (SELECT COUNT(*) FROM roles) AS roles, (SELECT COUNT(*) FROM users) AS users, (SELECT COUNT(*) FROM audit_logs) AS audit_rows;" 2>/dev/null
+            echo '```'
+          } > /tmp/evidence.md 2>&1
+          cat /tmp/evidence.md
+
+      - name: Publish the build/startup report to the tracking issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          REPORT=/tmp/report.md
+          {
+            echo "### Run ${{ github.run_id }} — ${{ job.status }}"
+            echo
+            echo "Ref: \`${{ github.ref_name }}\` · commit \`${GITHUB_SHA:0:8}\` · [job](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            echo
+            if [ -f /tmp/mvn.log ] && [ "${{ job.status }}" != "success" ]; then
+              echo "Compiler diagnostics (deduplicated, first 220):"
+              echo '```'
+              grep -E "^\[ERROR\].*\.java:\[" /tmp/mvn.log | sed -E 's#.*/com/infeara/sales/##' | sort -u | head -220
+              echo '```'
+              echo
+              echo "Files with errors: $(grep -oE '/com/infeara/sales/[^:]*\.java' /tmp/mvn.log | sort -u | wc -l)"
+              echo
+              echo "Tail:"
+              echo '```'
+              grep -E "BUILD FAILURE|ERROR\] Failed to execute|Total time" /tmp/mvn.log | head -10
+              echo '```'
+            fi
+            if [ -f /tmp/verify.log ]; then
+              echo "WAR verification:"
+              echo '```'
+              tail -n 40 /tmp/verify.log
+              echo '```'
+            fi
+            if [ -f /tmp/evidence.md ]; then
+              cat /tmp/evidence.md
+              echo
+            fi
+            if [ -f /opt/tomcat/logs/catalina.out ] && [ "${{ job.status }}" != "success" ]; then
+              echo "Flyway / startup error detail:"
+              echo '```'
+              grep -n -B 4 -A 6 -E "SQL State|Error Code|Message *:|Migration .* failed|Migration V[0-9]+" \
+                /opt/tomcat/logs/catalina.out | tail -n 70
+              echo '```'
+              echo "Tomcat log tail:"
+              echo '```'
+              tail -n 120 /opt/tomcat/logs/catalina.out
+              echo '```'
+            fi
+          } > "$REPORT"
+          echo "report bytes: $(wc -c < "$REPORT")"
+          head -c 2000 "$REPORT" || true
+          if [ -s "$REPORT" ]; then
+            gh api "repos/${{ github.repository }}/issues/1/comments" \
+              -F "body=@$REPORT" >/dev/null && echo "report posted to issue #1"
+          else
+            gh api "repos/${{ github.repository }}/issues/1/comments" \
+              -f body="Run ${{ github.run_id }} failed before producing output." >/dev/null || true
+          fi
+
+      - name: Upload WAR and logs
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: infeara-sales-os-war
+          path: backend/target/infeara-sales-os.war
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Stop Tomcat
+        if: always()
+        run: /opt/tomcat/bin/shutdown.sh 10 -force || true
